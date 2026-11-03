@@ -1,0 +1,34 @@
+{
+  "name": "rocketflag",
+  "version": "0.1.0",
+  "description": "Command-line interface for RocketFlag feature flags.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "rocketflag": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@rocketflag/management": "^0.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RocketFlag/cli.git",
+    "directory": "packages/cli"
+  }
+}

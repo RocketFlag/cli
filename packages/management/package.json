@@ -1,0 +1,29 @@
+{
+  "name": "@rocketflag/management",
+  "version": "0.1.0",
+  "description": "Zero-dependency TypeScript client for the RocketFlag Management and Evaluation APIs.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RocketFlag/cli.git",
+    "directory": "packages/management"
+  }
+}
