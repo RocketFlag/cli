@@ -16,7 +16,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -b --pretty false",
     "build": "tsc -b",
-    "checks": "npm run typecheck && npm run lint && npm test"
+    "checks": "npm run build && npm run typecheck && npm run lint && npm test"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
