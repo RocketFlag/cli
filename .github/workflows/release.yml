@@ -23,6 +23,9 @@ jobs:
           registry-url: https://registry.npmjs.org/
           cache: "npm"
 
+      - name: Update npm
+        run: npm install -g npm@latest
+
       - name: Install dependencies
         run: npm ci
 
@@ -38,12 +41,10 @@ jobs:
       - name: Test
         run: npm test
 
+      # Auth uses npm OIDC trusted publishing (no token) via the `id-token: write`
+      # permission above, which also signs provenance automatically.
       - name: Publish @rocketflag/management
         run: npm publish -w @rocketflag/management --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish rocketflag CLI
         run: npm publish -w rocketflag --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

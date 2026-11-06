@@ -64,6 +64,9 @@ describe("Repository packaging, workflows, and READMEs", () => {
       expect(content).toContain("release:");
       expect(content).toContain("created");
       expect(content).toContain("id-token: write");
+      expect(content).toContain("npm install -g npm@latest");
+      expect(content).not.toContain("NPM_TOKEN");
+      expect(content).not.toContain("NODE_AUTH_TOKEN");
       expect(content).toContain("npm ci");
       expect(content).toContain("npm run typecheck");
       expect(content).toContain("npm run lint");
