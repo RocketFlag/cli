@@ -212,7 +212,7 @@ describe("End-to-end subprocess suite (compiled CLI and MCP binaries)", () => {
         const id = `flg_e2e_${nextFlagSeq++}`;
         const defaultState = (): StoredEnvState => ({
           enabled: false,
-          trafficPercentage: 0,
+          trafficPercentage: 100,
           cohorts: [],
           audienceId: null,
         });
@@ -224,7 +224,7 @@ describe("End-to-end subprocess suite (compiled CLI and MCP binaries)", () => {
           for (const [envName, patch] of Object.entries(payload.environments)) {
             environments[envName] = {
               enabled: patch.enabled ?? false,
-              trafficPercentage: patch.trafficPercentage ?? 0,
+              trafficPercentage: patch.trafficPercentage ?? 100,
               cohorts: patch.cohorts ?? [],
               audienceId: patch.audienceId ?? null,
             };

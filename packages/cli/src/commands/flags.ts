@@ -381,7 +381,7 @@ async function runFlagsCreate(args: string[], io: CliIo): Promise<number> {
         ...(description !== undefined ? { description } : {}),
         ...(tags && tags.length > 0 ? { tags } : {}),
         ...(enabled !== undefined ? { enabled } : {}),
-        ...(trafficPercentage !== undefined ? { trafficPercentage } : {}),
+        trafficPercentage: trafficPercentage ?? 100,
         ...(cohorts && cohorts.length > 0 ? { cohorts } : {}),
         ...(audienceId !== undefined ? { audienceId } : {}),
       };
@@ -403,11 +403,18 @@ async function runFlagsCreate(args: string[], io: CliIo): Promise<number> {
       (cohorts !== undefined && cohorts.length > 0) ||
       audienceId !== undefined;
     const explicitEnv = normalizeOptionalEnv(parsed.values.env);
+    const allowed = getAllowedEnvironments(tokenInfo);
+
+    const environments: Record<string, FlagStatePatch> = {};
+    for (const envName of allowed) {
+      environments[envName] = { trafficPercentage: 100 };
+    }
 
     const input: CreateFlagInput = {
       name,
       ...(description !== undefined ? { description } : {}),
       ...(tags && tags.length > 0 ? { tags } : {}),
+      ...(allowed.length > 0 ? { environments } : {}),
     };
 
     if (hasInitialState || explicitEnv !== undefined) {
@@ -436,7 +443,6 @@ async function runFlagsCreate(args: string[], io: CliIo): Promise<number> {
         return EXIT_USAGE;
       }
 
-      const allowed = getAllowedEnvironments(tokenInfo);
       if (!allowed.includes(targetEnv)) {
         writeErrorLine(
           io,
@@ -447,14 +453,13 @@ async function runFlagsCreate(args: string[], io: CliIo): Promise<number> {
 
       const envPatch: FlagStatePatch = {
         ...(enabled !== undefined ? { enabled } : {}),
-        ...(trafficPercentage !== undefined ? { trafficPercentage } : {}),
+        trafficPercentage: trafficPercentage ?? 100,
         ...(cohorts && cohorts.length > 0 ? { cohorts } : {}),
         ...(audienceId !== undefined ? { audienceId } : {}),
       };
 
-      input.environments = {
-        [targetEnv]: envPatch,
-      };
+      environments[targetEnv] = envPatch;
+      input.environments = environments;
     }
 
     const created = await client.createFlag(input);

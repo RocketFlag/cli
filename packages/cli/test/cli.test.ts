@@ -593,9 +593,99 @@ describe("rocketflag CLI commands", () => {
             trafficPercentage: 25,
             cohorts: ["alpha"],
           },
+          staging: {
+            trafficPercentage: 100,
+          },
+          prod: {
+            trafficPercentage: 100,
+          },
         },
       });
       expect(JSON.parse(getStdout())).toEqual(createdGroupFlag);
+    });
+
+    it("defaults trafficPercentage to 100 when --percentage is omitted on single-env and multi-env projects", async () => {
+      const createdSingle: PublicFlag = {
+        id: "FgDefault100",
+        name: "single-default",
+        kind: "flag",
+        enabled: true,
+        trafficPercentage: 100,
+        cohorts: [],
+        audienceId: null,
+        updatedAt: 1790730000000,
+      };
+      const createdMulti: PublicFlag = {
+        id: "GpDefault100",
+        name: "multi-default",
+        kind: "groupflag",
+        environments: {
+          dev: {
+            enabled: false,
+            trafficPercentage: 100,
+            cohorts: [],
+            audienceId: null,
+            updatedAt: 1790730000000,
+          },
+          staging: {
+            enabled: false,
+            trafficPercentage: 100,
+            cohorts: [],
+            audienceId: null,
+            updatedAt: 1790730000000,
+          },
+          prod: {
+            enabled: false,
+            trafficPercentage: 100,
+            cohorts: [],
+            audienceId: null,
+            updatedAt: 1790730000000,
+          },
+        },
+        updatedAt: 1790730000000,
+      };
+
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse(singleEnvWriteToken))
+        .mockResolvedValueOnce(jsonResponse(createdSingle, 201))
+        .mockResolvedValueOnce(jsonResponse(multiEnvWriteToken))
+        .mockResolvedValueOnce(jsonResponse(createdMulti, 201));
+
+      const singleHarness = createHarness({
+        fetch: fetchMock,
+        env: { ROCKETFLAG_TOKEN: "rf_write" },
+      });
+      expect(
+        await runCli(
+          ["flags", "create", "single-default", "--enabled", "--json"],
+          singleHarness.io,
+        ),
+      ).toBe(EXIT_OK);
+      expect(JSON.parse(String(fetchMock.mock.calls[1]![1]?.body))).toEqual({
+        name: "single-default",
+        enabled: true,
+        trafficPercentage: 100,
+      });
+
+      const multiHarness = createHarness({
+        fetch: fetchMock,
+        env: { ROCKETFLAG_TOKEN: "rf_write" },
+      });
+      expect(
+        await runCli(
+          ["flags", "create", "multi-default", "--json"],
+          multiHarness.io,
+        ),
+      ).toBe(EXIT_OK);
+      expect(JSON.parse(String(fetchMock.mock.calls[3]![1]?.body))).toEqual({
+        name: "multi-default",
+        environments: {
+          dev: { trafficPercentage: 100 },
+          staging: { trafficPercentage: 100 },
+          prod: { trafficPercentage: 100 },
+        },
+      });
     });
   });
 

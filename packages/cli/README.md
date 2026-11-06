@@ -67,7 +67,7 @@ rocketflag flags get <id> [--env <env>] [--token <rf_...>] [--api-url <url>] [--
 
 ### `rocketflag flags create <name>`
 
-Creates a new feature flag. Requires a **Write** token.
+Creates a new feature flag. Requires a **Write** token. New flags default to `100%` rollout traffic unless `--percentage` is passed. On a multi-environment project, passing initial state options (`--enabled`, `--percentage`, `--cohort`, `--audience`) applies them only to the target environment (`--env`, `ROCKETFLAG_ENV`, or `defaultEnv` from `.rocketflag.json`), while other environments start disabled (`off` at `100%` traffic).
 
 ```bash
 rocketflag flags create <name> \
