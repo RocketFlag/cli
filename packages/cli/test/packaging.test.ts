@@ -76,7 +76,7 @@ describe("Repository packaging, workflows, and READMEs", () => {
 
       const managementIdx = content.indexOf("@rocketflag/management");
       const cliIdx = content.search(
-        /npm publish\s+-w\s+rocketflag(?:\s|$)|--workspace=rocketflag(?:\s|$)/,
+        /npm publish\s+-w\s+@rocketflag\/cli(?:\s|$)|--workspace=@rocketflag\/cli(?:\s|$)/,
       );
 
       expect(managementIdx).toBeGreaterThan(-1);
@@ -119,7 +119,7 @@ describe("Repository packaging, workflows, and READMEs", () => {
       },
       {
         dir: "packages/cli",
-        expectedName: "rocketflag",
+        expectedName: "@rocketflag/cli",
         expectedBin: "rocketflag",
       },
     ] as const;

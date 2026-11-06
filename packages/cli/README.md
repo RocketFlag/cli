@@ -1,26 +1,28 @@
-# `rocketflag` CLI
+# `@rocketflag/cli`
 
-Official command-line interface for managing and evaluating [RocketFlag](https://rocketflag.app) feature flags from your terminal or CI pipelines.
+Official command-line interface (`rocketflag`) for managing and evaluating [RocketFlag](https://rocketflag.app) feature flags from your terminal or CI pipelines.
 
 ## Installation & Quickstart
 
-Requires **Node.js 22 or newer**. Run directly with `npx rocketflag` or install globally with `npm install -g rocketflag`.
+Requires **Node.js 22 or newer**. Install globally with `npm install -g @rocketflag/cli` (which puts `rocketflag` on your `PATH`), or run directly with `npx @rocketflag/cli`.
 
 ```bash
+npm install -g @rocketflag/cli
+
 # 1. Authenticate with your project API token (rf_...)
-npx rocketflag login
+rocketflag login
 
 # 2. Initialise .rocketflag.json in your repository
-npx rocketflag init
+rocketflag init
 
 # 3. Create a feature flag (requires a Write token)
-npx rocketflag flags create checkout_v2 --enabled
+rocketflag flags create checkout_v2 --enabled
 
 # 4. Toggle the flag on or off
-npx rocketflag flags toggle <flag_id>
+rocketflag flags toggle <flag_id>
 
 # 5. Evaluate the flag via the public Evaluation API
-npx rocketflag flags eval <flag_id>
+rocketflag flags eval <flag_id>
 ```
 
 ## Commands

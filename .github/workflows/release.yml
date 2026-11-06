@@ -44,7 +44,19 @@ jobs:
       # Auth uses npm OIDC trusted publishing (no token) via the `id-token: write`
       # permission above, which also signs provenance automatically.
       - name: Publish @rocketflag/management
-        run: npm publish -w @rocketflag/management --access public --provenance
+        run: |
+          VERSION=$(node -p "require('./packages/management/package.json').version")
+          if npm view "@rocketflag/management@${VERSION}" version >/dev/null 2>&1; then
+            echo "@rocketflag/management@${VERSION} is already published, skipping."
+          else
+            npm publish -w @rocketflag/management --access public --provenance
+          fi
 
-      - name: Publish rocketflag CLI
-        run: npm publish -w rocketflag --access public --provenance
+      - name: Publish @rocketflag/cli
+        run: |
+          VERSION=$(node -p "require('./packages/cli/package.json').version")
+          if npm view "@rocketflag/cli@${VERSION}" version >/dev/null 2>&1; then
+            echo "@rocketflag/cli@${VERSION} is already published, skipping."
+          else
+            npm publish -w @rocketflag/cli --access public --provenance
+          fi
