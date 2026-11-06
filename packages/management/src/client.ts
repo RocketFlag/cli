@@ -16,7 +16,7 @@ import type {
 
 const DEFAULT_API_URL = "https://api.rocketflag.app";
 const DEFAULT_CLIENT_NAME = "management";
-const DEFAULT_CLIENT_VERSION = "0.1.0";
+const DEFAULT_CLIENT_VERSION = "1.0.0";
 const ENV_REGEX = /^[A-Za-z0-9_-]+$/;
 
 export interface RocketFlagManagementClientOptions {

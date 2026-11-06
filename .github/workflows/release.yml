@@ -43,11 +43,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish @rocketflag/mcp
-        run: npm publish -w @rocketflag/mcp --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
       - name: Publish rocketflag CLI
         run: npm publish -w rocketflag --access public --provenance
         env:

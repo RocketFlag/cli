@@ -181,9 +181,9 @@ describe("@rocketflag/management", () => {
       expect(String(url)).toBe("https://api.rocketflag.app/v1/flags/flag_1");
       const headers = new Headers(init?.headers);
       expect(headers.get("Authorization")).toBeNull();
-      expect(headers.get("X-RocketFlag-Client")).toBe("management/0.1.0");
+      expect(headers.get("X-RocketFlag-Client")).toBe("management/1.0.0");
       expect(headers.get("User-Agent")).toBe(
-        `rocketflag-management/0.1.0 node/${process.versions.node} ${process.platform}-${process.arch}`,
+        `rocketflag-management/1.0.0 node/${process.versions.node} ${process.platform}-${process.arch}`,
       );
     });
   });
