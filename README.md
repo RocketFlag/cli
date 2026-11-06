@@ -21,7 +21,7 @@ npx rocketflag login
 # 2. Initialise .rocketflag.json in your repository
 npx rocketflag init
 
-# 3. Create a feature flag (requires a Write token)
+# 3. Create a feature flag (requires a Write token; enables in defaultEnv at 100% rollout)
 npx rocketflag flags create checkout_v2 --enabled
 
 # 4. Toggle the flag on or off (pass <id> from the create output)
