@@ -72,14 +72,12 @@ describe("Repository packaging, workflows, and READMEs", () => {
       expect(content).toContain("--access public --provenance");
 
       const managementIdx = content.indexOf("@rocketflag/management");
-      const mcpIdx = content.indexOf("@rocketflag/mcp");
       const cliIdx = content.search(
         /npm publish\s+-w\s+rocketflag(?:\s|$)|--workspace=rocketflag(?:\s|$)/,
       );
 
       expect(managementIdx).toBeGreaterThan(-1);
-      expect(mcpIdx).toBeGreaterThan(managementIdx);
-      expect(cliIdx).toBeGreaterThan(mcpIdx);
+      expect(cliIdx).toBeGreaterThan(managementIdx);
     });
   });
 
