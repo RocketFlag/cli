@@ -1,11 +1,11 @@
 {
-  "name": "rocketflag",
+  "name": "@rocketflag/cli",
   "version": "1.0.0",
   "description": "Command-line interface for RocketFlag feature flags.",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "rocketflag": "./dist/index.js"
+    "rocketflag": "dist/index.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
