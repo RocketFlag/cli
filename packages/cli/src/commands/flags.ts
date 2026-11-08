@@ -475,6 +475,176 @@ async function runFlagsCreate(args: string[], io: CliIo): Promise<number> {
   }
 }
 
+async function runFlagsUpdate(args: string[], io: CliIo): Promise<number> {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      options: {
+        env: { type: "string" },
+        on: { type: "boolean", default: false },
+        off: { type: "boolean", default: false },
+        percentage: { type: "string" },
+        cohort: { type: "string", multiple: true },
+        "clear-cohorts": { type: "boolean", default: false },
+        audience: { type: "string" },
+        "clear-audience": { type: "boolean", default: false },
+        token: { type: "string" },
+        "api-url": { type: "string" },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      allowPositionals: true,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    writeErrorLine(io, `Invalid arguments: ${message}`);
+    return EXIT_USAGE;
+  }
+
+  if (parsed.values.help) {
+    writeLine(
+      io,
+      "Usage: rocketflag flags update <id> [--env <env>] [--on | --off] [--percentage <0-100>] [--cohort <c>... | --clear-cohorts] [--audience <id> | --clear-audience] [--token <rf_...>] [--api-url <url>] [--json]",
+    );
+    return EXIT_OK;
+  }
+
+  const id = normalizeOptionalEnv(parsed.positionals[0]);
+  if (!id || parsed.positionals.length > 1) {
+    writeErrorLine(
+      io,
+      "Usage: rocketflag flags update <id> [--env <env>] [--on | --off] [--percentage <0-100>] [--cohort <c>... | --clear-cohorts] [--audience <id> | --clear-audience] [--json]",
+    );
+    return EXIT_USAGE;
+  }
+
+  if (parsed.values.on && parsed.values.off) {
+    writeErrorLine(io, "Cannot pass both --on and --off to 'flags update'.");
+    return EXIT_USAGE;
+  }
+  if (parsed.values.cohort !== undefined && parsed.values["clear-cohorts"]) {
+    writeErrorLine(
+      io,
+      "Cannot pass both --cohort and --clear-cohorts to 'flags update'.",
+    );
+    return EXIT_USAGE;
+  }
+  if (parsed.values.audience !== undefined && parsed.values["clear-audience"]) {
+    writeErrorLine(
+      io,
+      "Cannot pass both --audience and --clear-audience to 'flags update'.",
+    );
+    return EXIT_USAGE;
+  }
+
+  let trafficPercentage: number | undefined;
+  if (parsed.values.percentage !== undefined) {
+    const rawPct = parsed.values.percentage.trim();
+    if (!/^\d+$/.test(rawPct)) {
+      writeErrorLine(
+        io,
+        `Invalid --percentage '${parsed.values.percentage}'. Must be an integer between 0 and 100.`,
+      );
+      return EXIT_USAGE;
+    }
+    const num = Number(rawPct);
+    if (!Number.isInteger(num) || num < 0 || num > 100) {
+      writeErrorLine(
+        io,
+        `Invalid --percentage '${parsed.values.percentage}'. Must be an integer between 0 and 100.`,
+      );
+      return EXIT_USAGE;
+    }
+    trafficPercentage = num;
+  }
+
+  const enabled = parsed.values.on
+    ? true
+    : parsed.values.off
+      ? false
+      : undefined;
+
+  let cohorts: string[] | undefined;
+  if (parsed.values["clear-cohorts"]) {
+    cohorts = [];
+  } else if (parsed.values.cohort !== undefined) {
+    cohorts = parsed.values.cohort
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0);
+  }
+
+  let audienceId: string | null | undefined;
+  if (parsed.values["clear-audience"]) {
+    audienceId = null;
+  } else if (parsed.values.audience !== undefined) {
+    const trimmed = normalizeOptionalEnv(parsed.values.audience);
+    if (!trimmed) {
+      writeErrorLine(
+        io,
+        "Invalid --audience. Provide an audience ID or use --clear-audience to remove it.",
+      );
+      return EXIT_USAGE;
+    }
+    audienceId = trimmed;
+  }
+
+  const patch: FlagStatePatch = {
+    ...(enabled !== undefined ? { enabled } : {}),
+    ...(trafficPercentage !== undefined ? { trafficPercentage } : {}),
+    ...(cohorts !== undefined ? { cohorts } : {}),
+    ...(audienceId !== undefined ? { audienceId } : {}),
+  };
+
+  if (Object.keys(patch).length === 0) {
+    writeErrorLine(
+      io,
+      "No fields to update. Pass at least one of --on, --off, --percentage, --cohort, --clear-cohorts, --audience, or --clear-audience.",
+    );
+    return EXIT_USAGE;
+  }
+
+  const client = await createAuthenticatedClient(io, {
+    flagToken: parsed.values.token,
+    flagApiUrl: parsed.values["api-url"],
+  });
+  if (!client) {
+    writeErrorLine(
+      io,
+      "Not authenticated. Run 'rocketflag login', pass --token <rf_...>, or set ROCKETFLAG_TOKEN.",
+    );
+    return EXIT_AUTH;
+  }
+
+  const foundRepo = await findRepoConfig(io.cwd);
+  const env = normalizeOptionalEnv(
+    resolveEnvironment({
+      flagEnv: parsed.values.env,
+      env: io.env,
+      repoConfig: foundRepo?.config,
+    }),
+  );
+
+  try {
+    const result = await client.patchFlag(id, patch, { env });
+    if (parsed.values.json) {
+      writeJson(io, result);
+      return EXIT_OK;
+    }
+
+    const environment = result.flag.environment ?? env ?? null;
+    const envLabel = environment ? ` [${environment}]` : "";
+    writeLine(
+      io,
+      `Updated flag '${result.flag.name}' (${result.flag.id})${envLabel}${result.changed ? "." : " (unchanged)."}`,
+    );
+    printHumanFlagDetail(io, result.flag);
+    return EXIT_OK;
+  } catch (err) {
+    return handleCommandError(io, err);
+  }
+}
+
 async function runFlagsToggle(args: string[], io: CliIo): Promise<number> {
   let parsed;
   try {
@@ -748,6 +918,8 @@ export async function runFlagsCommand(
       return runFlagsGet(rest, io);
     case "create":
       return runFlagsCreate(rest, io);
+    case "update":
+      return runFlagsUpdate(rest, io);
     case "toggle":
       return runFlagsToggle(rest, io);
     case "eval":
@@ -757,13 +929,13 @@ export async function runFlagsCommand(
     case "help":
       writeLine(
         io,
-        "Usage: rocketflag flags <list|get|create|toggle|eval> [options]",
+        "Usage: rocketflag flags <list|get|create|update|toggle|eval> [options]",
       );
       return EXIT_OK;
     default:
       writeErrorLine(
         io,
-        `Unknown or missing flags subcommand${subcommand ? ` '${subcommand}'` : ""}. Expected one of: list, get, create, toggle, eval.`,
+        `Unknown or missing flags subcommand${subcommand ? ` '${subcommand}'` : ""}. Expected one of: list, get, create, update, toggle, eval.`,
       );
       return EXIT_USAGE;
   }
