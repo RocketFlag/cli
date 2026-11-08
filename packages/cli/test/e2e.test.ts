@@ -465,7 +465,7 @@ describe("End-to-end subprocess suite (compiled CLI binary)", () => {
     );
     expect(evalReq).toBeDefined();
     expect(evalReq?.headers.authorization).toBeUndefined();
-    expect(evalReq?.headers["x-rocketflag-client"]).toBe("cli/1.0.0");
+    expect(evalReq?.headers["x-rocketflag-client"]).toBe("cli/1.1.0");
     expect(evalReq?.url).toContain("env=staging");
     expect(evalReq?.url).toContain("cohort=beta");
     expect(evalReq?.url).toContain("targetingKey=user_1");

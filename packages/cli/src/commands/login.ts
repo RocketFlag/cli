@@ -23,7 +23,7 @@ import {
 } from "../output.js";
 
 export const CLI_CLIENT_NAME = "cli";
-export const CLI_CLIENT_VERSION = "1.0.0";
+export const CLI_CLIENT_VERSION = "1.1.0";
 
 export async function runLoginCommand(
   args: string[],
