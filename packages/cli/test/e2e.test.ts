@@ -6,15 +6,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../../..");
 const cliBinPath = path.join(repoRoot, "packages/cli/dist/index.js");
-const mcpBinPath = path.join(repoRoot, "packages/mcp/dist/index.js");
 
 interface RecordedRequest {
   method: string;
@@ -87,7 +84,7 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   res.end(JSON.stringify(payload));
 }
 
-describe("End-to-end subprocess suite (compiled CLI and MCP binaries)", () => {
+describe("End-to-end subprocess suite (compiled CLI binary)", () => {
   let tempDir: string;
   let configDir: string;
   let workspaceDir: string;
@@ -486,97 +483,5 @@ describe("End-to-end subprocess suite (compiled CLI and MCP binaries)", () => {
       { cwd: workspaceDir, env: baseEnv },
     );
     expect(authRes.code).toBe(3);
-  });
-
-  it("spawns the compiled MCP server over stdio and executes tools end to end", async () => {
-    flagsById.set("flg_mcp_1", {
-      id: "flg_mcp_1",
-      name: "mcp_feature",
-      environments: {
-        staging: {
-          enabled: false,
-          trafficPercentage: 100,
-          cohorts: [],
-          audienceId: null,
-        },
-        production: {
-          enabled: false,
-          trafficPercentage: 0,
-          cohorts: [],
-          audienceId: null,
-        },
-      },
-    });
-
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [mcpBinPath],
-      env: {
-        ...(process.env as Record<string, string>),
-        ROCKETFLAG_TOKEN: validWriteToken,
-        ROCKETFLAG_API_URL: apiUrl,
-      },
-      stderr: "pipe",
-    });
-
-    const client = new Client({
-      name: "e2e-stdio-client",
-      version: "0.1.0",
-    });
-
-    try {
-      await client.connect(transport);
-
-      const { tools } = await client.listTools();
-      expect(tools.map((t) => t.name)).toEqual([
-        "whoami",
-        "list_flags",
-        "get_flag",
-        "create_flag",
-        "toggle_flag",
-        "evaluate_flag",
-      ]);
-
-      const whoamiResult = await client.callTool({
-        name: "whoami",
-        arguments: {},
-      });
-      expect(whoamiResult.isError).toBeFalsy();
-
-      const toggleResult = await client.callTool({
-        name: "toggle_flag",
-        arguments: { id: "flg_mcp_1", env: "staging" },
-      });
-      expect(toggleResult.isError).toBeFalsy();
-
-      const evalResult = await client.callTool({
-        name: "evaluate_flag",
-        arguments: {
-          id: "flg_mcp_1",
-          env: "staging",
-          cohort: "beta",
-          targetingKey: "user_42",
-          attributes: { plan: "enterprise" },
-        },
-      });
-      expect(evalResult.isError).toBeFalsy();
-      const firstBlock = (
-        evalResult.content as Array<{ type: string; text: string }>
-      )[0];
-      expect(JSON.parse(firstBlock!.text)).toEqual({
-        id: "flg_mcp_1",
-        name: "mcp_feature",
-        enabled: true,
-      });
-
-      expect(
-        recordedRequests.length,
-      ).toBeGreaterThanOrEqual(3);
-      for (const req of recordedRequests) {
-        expect(req.headers["x-rocketflag-client"]).toBe("mcp/0.1.0");
-      }
-    } finally {
-      await client.close();
-    }
   });
 });

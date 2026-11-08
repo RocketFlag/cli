@@ -8,7 +8,6 @@
   },
   "workspaces": [
     "packages/management",
-    "packages/mcp",
     "packages/cli"
   ],
   "scripts": {

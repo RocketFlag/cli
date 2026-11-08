@@ -1,13 +1,12 @@
-# RocketFlag CLI, MCP Server, and Management Client
+# RocketFlag CLI and Management Client
 
-Official command-line interface, Model Context Protocol (MCP) server, and TypeScript Management API client for [RocketFlag](https://rocketflag.app).
+Official command-line interface and TypeScript Management API client for [RocketFlag](https://rocketflag.app).
 
 ## Packages in this Monorepo
 
 | Package | Description |
 | --- | --- |
 | [`@rocketflag/cli`](./packages/cli) | Command-line interface (`rocketflag` / `npx @rocketflag/cli`) for authenticating, initialising repositories, and managing or evaluating feature flags from the terminal or CI pipelines. |
-| [`@rocketflag/mcp`](./packages/mcp) | Model Context Protocol (MCP) server (`npx -y @rocketflag/mcp`) exposing RocketFlag tools to AI coding assistants such as Claude Code, Cursor, and Antigravity. |
 | [`@rocketflag/management`](./packages/management) | Zero-dependency TypeScript client for the RocketFlag Management API (`/api/v1`) and public Evaluation API (`/v1/flags/:id`). |
 
 ## Quickstart: First Flag in 2 Minutes
@@ -34,15 +33,15 @@ rocketflag flags toggle <flag_id>
 rocketflag flags eval <flag_id>
 ```
 
-## AI Agent Integration (`@rocketflag/mcp`)
+## AI Agent Integration (Hosted MCP Server)
 
-Add the RocketFlag MCP server to Claude Code with a single command:
+RocketFlag provides a hosted Model Context Protocol (MCP) server at `https://api.rocketflag.app/mcp/v1`. Add it to Claude Code with a single command:
 
 ```bash
-claude mcp add rocketflag -e ROCKETFLAG_TOKEN=rf_your_token_here -- npx -y @rocketflag/mcp
+claude mcp add --transport http rocketflag https://api.rocketflag.app/mcp/v1 --header "Authorization: Bearer rf_your_token_here"
 ```
 
-See [`packages/mcp/README.md`](./packages/mcp/README.md) for Cursor and Antigravity configuration examples and tool documentation.
+See the [CLI & MCP guide](https://docs.rocketflag.app/dev/cli-and-mcp/) for Cursor and Antigravity configuration examples and tool documentation.
 
 ## Repository Development
 

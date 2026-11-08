@@ -88,7 +88,6 @@ describe("Repository packaging, workflows, and READMEs", () => {
     const readmePaths = [
       "README.md",
       "packages/management/README.md",
-      "packages/mcp/README.md",
       "packages/cli/README.md",
     ];
 
@@ -106,16 +105,24 @@ describe("Repository packaging, workflows, and READMEs", () => {
   });
 
   describe("Workspace package.json entrypoints and build outputs", () => {
+    it("only includes @rocketflag/management and @rocketflag/cli workspaces and does not include packages/mcp", async () => {
+      const rootPkgRaw = await readFile(
+        path.join(repoRoot, "package.json"),
+        "utf8",
+      );
+      const rootPkg = JSON.parse(rootPkgRaw) as { workspaces?: string[] };
+      expect(rootPkg.workspaces).toEqual([
+        "packages/management",
+        "packages/cli",
+      ]);
+      expect(existsSync(path.join(repoRoot, "packages/mcp"))).toBe(false);
+    });
+
     const packages = [
       {
         dir: "packages/management",
         expectedName: "@rocketflag/management",
         expectedBin: undefined,
-      },
-      {
-        dir: "packages/mcp",
-        expectedName: "@rocketflag/mcp",
-        expectedBin: "rocketflag-mcp",
       },
       {
         dir: "packages/cli",
