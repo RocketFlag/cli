@@ -4,8 +4,10 @@ import {
   getAllowedEnvironments,
   getStaleTokenEnvironments,
   isMultiEnvironmentProject,
+  type TokenProject,
 } from "@rocketflag/management";
 import {
+  isUserSessionToken,
   loadUserConfig,
   normalizeOptionalEnv,
   resolveApiUrl,
@@ -14,6 +16,7 @@ import {
 } from "../config.js";
 import {
   EXIT_AUTH,
+  EXIT_ERROR,
   EXIT_OK,
   EXIT_USAGE,
   formatStaleEnvWarning,
@@ -34,6 +37,7 @@ export async function runInitCommand(
     parsed = parseArgs({
       args,
       options: {
+        project: { type: "string" },
         env: { type: "string" },
         token: { type: "string" },
         "api-url": { type: "string" },
@@ -51,7 +55,7 @@ export async function runInitCommand(
   if (parsed.values.help) {
     writeLine(
       io,
-      "Usage: rocketflag init [--env <env>] [--token <rf_...>] [--api-url <url>] [--json]",
+      "Usage: rocketflag init [--project <id>] [--env <env>] [--token <token>] [--api-url <url>] [--json]",
     );
     return EXIT_OK;
   }
@@ -66,7 +70,7 @@ export async function runInitCommand(
   if (!token) {
     writeErrorLine(
       io,
-      "Not authenticated. Run 'rocketflag login', pass --token <rf_...>, or set ROCKETFLAG_TOKEN.",
+      "Not authenticated. Run 'rocketflag login', pass --token <token>, or set ROCKETFLAG_TOKEN.",
     );
     return EXIT_AUTH;
   }
@@ -85,8 +89,182 @@ export async function runInitCommand(
     fetch: io.fetch,
   });
 
+  const explicitFlagEnv = normalizeOptionalEnv(parsed.values.env);
+  const requestedProjectId =
+    normalizeOptionalEnv(parsed.values.project) ??
+    normalizeOptionalEnv(io.env.ROCKETFLAG_PROJECT);
+
   try {
+    if (isUserSessionToken(token)) {
+      const projects = await client.listProjects();
+      if (projects.length === 0) {
+        writeErrorLine(
+          io,
+          "No projects found for this account. Create a project at https://console.rocketflag.app first.",
+        );
+        return EXIT_ERROR;
+      }
+
+      let chosenProject: TokenProject;
+      if (requestedProjectId !== undefined) {
+        const match = projects.find((p) => p.id === requestedProjectId);
+        if (!match) {
+          writeErrorLine(
+            io,
+            `Project '${requestedProjectId}' was not found or is not accessible. Available projects: ${projects.map((p) => `${p.name} (${p.id})`).join(", ")}.`,
+          );
+          return EXIT_USAGE;
+        }
+        chosenProject = {
+          id: match.id,
+          name: match.name,
+          environments: match.environments,
+        };
+      } else if (projects.length === 1) {
+        const only = projects[0]!;
+        chosenProject = {
+          id: only.id,
+          name: only.name,
+          environments: only.environments,
+        };
+      } else if (io.promptSelectProject) {
+        const selectedId = normalizeOptionalEnv(
+          await io.promptSelectProject(projects),
+        );
+        let match = selectedId
+          ? projects.find((p) => p.id === selectedId || p.name === selectedId)
+          : undefined;
+        if (!match && selectedId && /^\d+$/.test(selectedId)) {
+          const index = Number.parseInt(selectedId, 10);
+          if (index >= 1 && index <= projects.length) {
+            match = projects[index - 1];
+          }
+        }
+        if (!match) {
+          writeErrorLine(
+            io,
+            `Invalid project selection. Choose 1-${projects.length} or one of: ${projects.map((p) => p.id).join(", ")}.`,
+          );
+          return EXIT_USAGE;
+        }
+        chosenProject = {
+          id: match.id,
+          name: match.name,
+          environments: match.environments,
+        };
+      } else {
+        writeErrorLine(
+          io,
+          `Multiple projects available. Pass --project <id> (${projects.map((p) => `${p.id} [${p.name}]`).join(", ")}).`,
+        );
+        return EXIT_USAGE;
+      }
+
+      if (chosenProject.environments.length === 0) {
+        if (parsed.values.env !== undefined) {
+          writeErrorLine(
+            io,
+            `Project '${chosenProject.name}' is a single-environment project and does not use --env.`,
+          );
+          return EXIT_USAGE;
+        }
+
+        const configPath = await saveRepoConfig(io.cwd, {
+          projectId: chosenProject.id,
+        });
+
+        if (parsed.values.json) {
+          writeJson(io, {
+            path: configPath,
+            config: { projectId: chosenProject.id },
+            project: chosenProject,
+          });
+          return EXIT_OK;
+        }
+
+        writeLine(
+          io,
+          `Initialised RocketFlag project '${chosenProject.name}' (${chosenProject.id}) in ${configPath}`,
+        );
+        return EXIT_OK;
+      }
+
+      const allowed = chosenProject.environments;
+      const requestedEnv =
+        explicitFlagEnv ?? normalizeOptionalEnv(io.env.ROCKETFLAG_ENV);
+      let defaultEnv: string;
+
+      if (requestedEnv !== undefined) {
+        if (!allowed.includes(requestedEnv)) {
+          writeErrorLine(
+            io,
+            `Unknown environment '${requestedEnv}' for project '${chosenProject.name}'. Valid project environments: ${allowed.join(", ")}.`,
+          );
+          return EXIT_USAGE;
+        }
+        defaultEnv = requestedEnv;
+      } else if (allowed.length === 1) {
+        defaultEnv = allowed[0]!;
+      } else if (io.promptSelectEnv) {
+        const selected = normalizeOptionalEnv(await io.promptSelectEnv(allowed));
+        if (!selected || !allowed.includes(selected)) {
+          writeErrorLine(
+            io,
+            `Invalid environment selection. Choose one of: ${allowed.join(", ")}.`,
+          );
+          return EXIT_USAGE;
+        }
+        defaultEnv = selected;
+      } else {
+        writeErrorLine(
+          io,
+          `Project '${chosenProject.name}' has multiple environments. Pass --env <name> (${allowed.join(", ")}).`,
+        );
+        return EXIT_USAGE;
+      }
+
+      const configPath = await saveRepoConfig(io.cwd, {
+        projectId: chosenProject.id,
+        defaultEnv,
+      });
+
+      if (parsed.values.json) {
+        writeJson(io, {
+          path: configPath,
+          config: { projectId: chosenProject.id, defaultEnv },
+          project: chosenProject,
+        });
+        return EXIT_OK;
+      }
+
+      writeLine(
+        io,
+        `Initialised RocketFlag project '${chosenProject.name}' (${chosenProject.id}) with defaultEnv '${defaultEnv}' in ${configPath}`,
+      );
+      return EXIT_OK;
+    }
+
     const tokenInfo = await client.getToken();
+    const project = tokenInfo.project;
+    if (!project) {
+      writeErrorLine(
+        io,
+        "No project associated with this credential. Pass --project <id>.",
+      );
+      return EXIT_USAGE;
+    }
+
+    if (
+      requestedProjectId !== undefined &&
+      requestedProjectId !== project.id
+    ) {
+      writeErrorLine(
+        io,
+        `Token '${tokenInfo.name}' is scoped to project '${project.name}' (${project.id}), not '${requestedProjectId}'.`,
+      );
+      return EXIT_USAGE;
+    }
+
     const multiEnvironment = isMultiEnvironmentProject(tokenInfo);
     const staleEnvironments = getStaleTokenEnvironments(tokenInfo);
 
@@ -94,42 +272,41 @@ export async function runInitCommand(
       writeErrorLine(io, formatStaleEnvWarning(staleEnvironments));
     }
 
-    const explicitFlagEnv = normalizeOptionalEnv(parsed.values.env);
-
     if (!multiEnvironment) {
       if (parsed.values.env !== undefined) {
         writeErrorLine(
           io,
-          `Project '${tokenInfo.project.name}' is a single-environment project and does not use --env.`,
+          `Project '${project.name}' is a single-environment project and does not use --env.`,
         );
         return EXIT_USAGE;
       }
 
       const configPath = await saveRepoConfig(io.cwd, {
-        projectId: tokenInfo.project.id,
+        projectId: project.id,
       });
 
       if (parsed.values.json) {
         writeJson(io, {
           path: configPath,
-          config: { projectId: tokenInfo.project.id },
-          project: tokenInfo.project,
+          config: { projectId: project.id },
+          project,
         });
         return EXIT_OK;
       }
 
       writeLine(
         io,
-        `Initialised RocketFlag project '${tokenInfo.project.name}' (${tokenInfo.project.id}) in ${configPath}`,
+        `Initialised RocketFlag project '${project.name}' (${project.id}) in ${configPath}`,
       );
       return EXIT_OK;
     }
 
     const allowed = getAllowedEnvironments(tokenInfo);
+    const tokenEnvs = tokenInfo.environments ?? [];
     if (allowed.length === 0) {
       writeErrorLine(
         io,
-        `Token '${tokenInfo.name}' is restricted to environment(s) [${tokenInfo.environments.join(", ")}] which no longer exist on project '${tokenInfo.project.name}'.`,
+        `Token '${tokenInfo.name}' is restricted to environment(s) [${tokenEnvs.join(", ")}] which no longer exist on project '${project.name}'.`,
       );
       return EXIT_AUTH;
     }
@@ -139,10 +316,10 @@ export async function runInitCommand(
     let defaultEnv: string;
 
     if (requestedEnv !== undefined) {
-      if (!tokenInfo.project.environments.includes(requestedEnv)) {
+      if (!project.environments.includes(requestedEnv)) {
         writeErrorLine(
           io,
-          `Unknown environment '${requestedEnv}' for project '${tokenInfo.project.name}'. Valid project environments: ${tokenInfo.project.environments.join(", ")}.`,
+          `Unknown environment '${requestedEnv}' for project '${project.name}'. Valid project environments: ${project.environments.join(", ")}.`,
         );
         return EXIT_USAGE;
       }
@@ -169,28 +346,28 @@ export async function runInitCommand(
     } else {
       writeErrorLine(
         io,
-        `Project '${tokenInfo.project.name}' has multiple environments. Pass --env <name> (${allowed.join(", ")}).`,
+        `Project '${project.name}' has multiple environments. Pass --env <name> (${allowed.join(", ")}).`,
       );
       return EXIT_USAGE;
     }
 
     const configPath = await saveRepoConfig(io.cwd, {
-      projectId: tokenInfo.project.id,
+      projectId: project.id,
       defaultEnv,
     });
 
     if (parsed.values.json) {
       writeJson(io, {
         path: configPath,
-        config: { projectId: tokenInfo.project.id, defaultEnv },
-        project: tokenInfo.project,
+        config: { projectId: project.id, defaultEnv },
+        project,
       });
       return EXIT_OK;
     }
 
     writeLine(
       io,
-      `Initialised RocketFlag project '${tokenInfo.project.name}' (${tokenInfo.project.id}) with defaultEnv '${defaultEnv}' in ${configPath}`,
+      `Initialised RocketFlag project '${project.name}' (${project.id}) with defaultEnv '${defaultEnv}' in ${configPath}`,
     );
     return EXIT_OK;
   } catch (err) {

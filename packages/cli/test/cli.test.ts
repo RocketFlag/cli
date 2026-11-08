@@ -1,9 +1,10 @@
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { PublicFlag, TokenInfo } from "@rocketflag/management";
+import type { PublicFlag, PublicProject, TokenInfo } from "@rocketflag/management";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runCli } from "../src/cli.js";
+import { defaultStartLoopbackAuth } from "../src/commands/login.js";
 import { saveRepoConfig, saveUserConfig } from "../src/config.js";
 import {
   EXIT_AUTH,
@@ -108,6 +109,9 @@ describe("rocketflag CLI commands", () => {
       cwd: overrides?.cwd ?? repoDir,
       promptToken: overrides?.promptToken,
       promptSelectEnv: overrides?.promptSelectEnv,
+      promptSelectProject: overrides?.promptSelectProject,
+      openBrowser: overrides?.openBrowser,
+      startLoopbackAuth: overrides?.startLoopbackAuth,
       fetch: overrides?.fetch,
     };
     return {
@@ -150,7 +154,7 @@ describe("rocketflag CLI commands", () => {
         promptToken: async () => "rf_prompted_read",
       });
 
-      const code = await runCli(["login"], io);
+      const code = await runCli(["login", "--no-browser"], io);
 
       expect(code).toBe(EXIT_OK);
       expect(getStdout()).toMatch(/read-only/i);
@@ -184,6 +188,232 @@ describe("rocketflag CLI commands", () => {
       expect(code).toBe(EXIT_USAGE);
       expect(getStderr()).toMatch(/--token|ROCKETFLAG_TOKEN/);
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("authenticates a user session via --no-browser manual mode and prints account details", async () => {
+      const userSessionTokenInfo: TokenInfo = {
+        kind: "user",
+        id: "Cs_1",
+        name: "jk-laptop",
+        expiresAt: 1798675200000,
+        user: {
+          id: "Usr_1",
+          email: "jk@rocketflag.app",
+          name: "JK Gunnink",
+        },
+      };
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse(userSessionTokenInfo));
+      const { io, getStdout, getStderr } = createHarness({
+        fetch: fetchMock,
+        promptToken: async () => "rfu_manual_token_123",
+      });
+
+      const code = await runCli(
+        ["login", "--no-browser", "--device-name", "My Laptop"],
+        io,
+      );
+
+      expect(code).toBe(EXIT_OK);
+      expect(getStderr()).toBe("");
+      expect(getStdout()).toContain(
+        "https://console.rocketflag.app/cli/auth?device=My%20Laptop",
+      );
+      expect(getStdout()).toContain("Authenticated as JK Gunnink (jk@rocketflag.app)");
+
+      const saved = JSON.parse(
+        await readFile(path.join(configDir, "config.json"), "utf8"),
+      ) as { token: string };
+      expect(saved.token).toBe("rfu_manual_token_123");
+    });
+
+    it("authenticates a user session via real loopback HTTP callback server", async () => {
+      const userSessionTokenInfo: TokenInfo = {
+        kind: "user",
+        id: "Cs_Loopback",
+        name: "workstation",
+        expiresAt: 1798675200000,
+        user: {
+          id: "Usr_1",
+          email: "jk@rocketflag.app",
+          name: "JK Gunnink",
+        },
+      };
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse(userSessionTokenInfo));
+
+      let capturedAuthUrl = "";
+      const { io, getStdout, getStderr } = createHarness({
+        fetch: fetchMock,
+        startLoopbackAuth: (opts) =>
+          defaultStartLoopbackAuth({
+            ...opts,
+            openBrowser: async (url) => {
+              capturedAuthUrl = url;
+              const parsedUrl = new URL(url);
+              const port = parsedUrl.searchParams.get("port");
+              const state = parsedUrl.searchParams.get("state");
+              expect(parsedUrl.pathname).toBe("/cli/auth");
+              expect(parsedUrl.searchParams.get("device")).toBe("workstation");
+              expect(port).toBeTruthy();
+              expect(state).toBeTruthy();
+
+              const callbackRes = await globalThis.fetch(
+                `http://127.0.0.1:${port}/callback?token=rfu_loopback_secret_999&state=${encodeURIComponent(state!)}`,
+              );
+              expect(callbackRes.status).toBe(200);
+              const html = await callbackRes.text();
+              expect(html).toContain("Authenticated with RocketFlag");
+              return true;
+            },
+          }),
+      });
+
+      const code = await runCli(
+        [
+          "login",
+          "--device-name",
+          "workstation",
+          "--console-url",
+          "https://console.custom.test",
+        ],
+        io,
+      );
+
+      expect(code).toBe(EXIT_OK);
+      expect(getStderr()).toBe("");
+      expect(capturedAuthUrl).toContain("https://console.custom.test/cli/auth?");
+      expect(getStdout()).toContain("Authenticated as JK Gunnink (jk@rocketflag.app)");
+
+      const saved = JSON.parse(
+        await readFile(path.join(configDir, "config.json"), "utf8"),
+      ) as { token: string };
+      expect(saved.token).toBe("rfu_loopback_secret_999");
+    });
+
+    it("rejects cancelled loopback authentication with EXIT_ERROR", async () => {
+      const fetchMock = vi.fn<typeof globalThis.fetch>();
+      const { io, getStderr } = createHarness({
+        fetch: fetchMock,
+        startLoopbackAuth: (opts) =>
+          defaultStartLoopbackAuth({
+            ...opts,
+            openBrowser: async (url) => {
+              const parsedUrl = new URL(url);
+              const port = parsedUrl.searchParams.get("port");
+              const state = parsedUrl.searchParams.get("state");
+              const res = await globalThis.fetch(
+                `http://127.0.0.1:${port}/callback?error=access_denied&state=${encodeURIComponent(state!)}`,
+              );
+              expect(res.status).toBe(200);
+              return true;
+            },
+          }),
+      });
+
+      const code = await runCli(["login"], io);
+      expect(code).toBe(EXIT_ERROR);
+      expect(getStderr()).toContain("Authentication cancelled in browser");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("logout", () => {
+    it("revokes rfu_ session via POST /api/v1/session/revoke and deletes saved config", async () => {
+      await saveUserConfig(
+        { token: "rfu_active_session" },
+        { env: { ROCKETFLAG_CONFIG_DIR: configDir } },
+      );
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      const { io, getStdout, getStderr } = createHarness({ fetch: fetchMock });
+
+      const code = await runCli(["logout"], io);
+      expect(code).toBe(EXIT_OK);
+      expect(getStderr()).toBe("");
+      expect(getStdout()).toContain("Logged out and removed saved credentials.");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0]!;
+      expect(String(url)).toBe("https://api.rocketflag.app/api/v1/session/revoke");
+      expect(init?.method).toBe("POST");
+
+      // Second logout when no config exists
+      const secondHarness = createHarness({ fetch: fetchMock });
+      const secondCode = await runCli(["logout", "--json"], secondHarness.io);
+      expect(secondCode).toBe(EXIT_OK);
+      expect(JSON.parse(secondHarness.getStdout())).toEqual({ loggedOut: false });
+    });
+
+    it("deletes saved config even if revokeSession fails with 401 or network error", async () => {
+      await saveUserConfig(
+        { token: "rfu_expired_session" },
+        { env: { ROCKETFLAG_CONFIG_DIR: configDir } },
+      );
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockRejectedValueOnce(new Error("ECONNREFUSED"));
+      const { io, getStdout } = createHarness({
+        fetch: fetchMock,
+      });
+
+      const code = await runCli(["logout", "--json"], io);
+      expect(code).toBe(EXIT_OK);
+      const parsed = JSON.parse(getStdout()) as { loggedOut: boolean; configPath: string };
+      expect(parsed.loggedOut).toBe(true);
+    });
+  });
+
+  describe("projects list", () => {
+    const sampleProjects: PublicProject[] = [
+      {
+        id: "Pj_Personal",
+        name: "Hobby App",
+        organisationId: "",
+        organisationName: "",
+        environments: [],
+        permission: "write",
+      },
+      {
+        id: "Pj_Org",
+        name: "Core Platform",
+        organisationId: "Org_1",
+        organisationName: "Acme Pty Ltd",
+        environments: ["dev", "prod"],
+        permission: "read",
+      },
+    ];
+
+    it("lists accessible projects in human table and --json modes", async () => {
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse({ projects: sampleProjects }))
+        .mockResolvedValueOnce(jsonResponse({ projects: sampleProjects }));
+
+      const humanHarness = createHarness({
+        fetch: fetchMock,
+        env: { ROCKETFLAG_TOKEN: "rfu_session" },
+      });
+      const humanCode = await runCli(["projects", "list"], humanHarness.io);
+      expect(humanCode).toBe(EXIT_OK);
+      const out = humanHarness.getStdout();
+      expect(out).toContain("ORGANISATION");
+      expect(out).toContain("Personal");
+      expect(out).toContain("single-env");
+      expect(out).toContain("Acme Pty Ltd");
+      expect(out).toContain("dev, prod");
+
+      const jsonHarness = createHarness({
+        fetch: fetchMock,
+        env: { ROCKETFLAG_TOKEN: "rfu_session" },
+      });
+      const jsonCode = await runCli(["projects", "list", "--json"], jsonHarness.io);
+      expect(jsonCode).toBe(EXIT_OK);
+      expect(JSON.parse(jsonHarness.getStdout())).toEqual({
+        projects: sampleProjects,
+      });
     });
   });
 
@@ -243,6 +473,57 @@ describe("rocketflag CLI commands", () => {
       expect(parsed.multiEnvironment).toBe(true);
       expect(parsed.allowedEnvironments).toEqual(["staging"]);
       expect(parsed.staleEnvironments).toEqual(["old-qa"]);
+    });
+
+    it("displays user session details with and without a selected project", async () => {
+      const userNoProject: TokenInfo = {
+        kind: "user",
+        id: "Cs_1",
+        name: "jk-laptop",
+        expiresAt: 1798675200000,
+        user: {
+          id: "Usr_1",
+          email: "jk@rocketflag.app",
+          name: "JK Gunnink",
+        },
+      };
+      const userWithProject: TokenInfo = {
+        ...userNoProject,
+        project: {
+          id: "PjMulti1",
+          name: "Platform",
+          environments: ["dev", "prod"],
+        },
+        permission: "write",
+      };
+
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse(userNoProject))
+        .mockResolvedValueOnce(jsonResponse(userWithProject));
+
+      const harness1 = createHarness({
+        fetch: fetchMock,
+        env: { ROCKETFLAG_TOKEN: "rfu_user_tok" },
+      });
+      expect(await runCli(["whoami"], harness1.io)).toBe(EXIT_OK);
+      expect(harness1.getStdout()).toContain("Account: JK Gunnink (jk@rocketflag.app)");
+      expect(harness1.getStdout()).toContain("Session: jk-laptop (Cs_1)");
+      expect(harness1.getStdout()).toContain("Project: none selected");
+
+      const harness2 = createHarness({
+        fetch: fetchMock,
+        env: { ROCKETFLAG_TOKEN: "rfu_user_tok" },
+      });
+      expect(
+        await runCli(["whoami", "--project", "PjMulti1"], harness2.io),
+      ).toBe(EXIT_OK);
+      expect(
+        new Headers(fetchMock.mock.calls[1]![1]?.headers).get("X-RocketFlag-Project"),
+      ).toBe("PjMulti1");
+      expect(harness2.getStdout()).toContain("Project: Platform (PjMulti1) [multi-environment]");
+      expect(harness2.getStdout()).toContain("Permission: write");
+      expect(harness2.getStdout()).toContain("Project environments: dev, prod");
     });
   });
 
@@ -326,6 +607,87 @@ describe("rocketflag CLI commands", () => {
       expect(repoConfigRaw).toEqual({
         projectId: "PjMulti1",
         defaultEnv: "staging",
+      });
+    });
+
+    it("supports rfu_ user sessions in init with single project auto-select, interactive project picker, and --project", async () => {
+      const projects: PublicProject[] = [
+        {
+          id: "Pj_1",
+          name: "Storefront",
+          organisationId: "",
+          organisationName: "",
+          environments: [],
+          permission: "write",
+        },
+        {
+          id: "Pj_2",
+          name: "Platform",
+          organisationId: "Org_1",
+          organisationName: "Acme",
+          environments: ["dev", "prod"],
+          permission: "write",
+        },
+      ];
+
+      // 1. Multiple projects without --project or promptSelectProject -> EXIT_USAGE
+      const nonInteractiveFetch = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse({ projects }));
+      const nonInteractiveHarness = createHarness({
+        fetch: nonInteractiveFetch,
+        env: { ROCKETFLAG_TOKEN: "rfu_user_tok" },
+      });
+      expect(await runCli(["init"], nonInteractiveHarness.io)).toBe(EXIT_USAGE);
+      expect(nonInteractiveHarness.getStderr()).toContain("Pass --project <id>");
+
+      // 2. Interactive project & environment selection (by project ID and by 1-based number)
+      const interactiveFetch = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse({ projects }))
+        .mockResolvedValueOnce(jsonResponse({ projects }));
+      const interactiveHarness = createHarness({
+        fetch: interactiveFetch,
+        env: { ROCKETFLAG_TOKEN: "rfu_user_tok" },
+        promptSelectProject: async () => "Pj_2",
+        promptSelectEnv: async () => "dev",
+      });
+      expect(await runCli(["init"], interactiveHarness.io)).toBe(EXIT_OK);
+      const repoConfigRaw = JSON.parse(
+        await readFile(path.join(repoDir, ".rocketflag.json"), "utf8"),
+      ) as Record<string, unknown>;
+      expect(repoConfigRaw).toEqual({
+        projectId: "Pj_2",
+        defaultEnv: "dev",
+      });
+
+      const numberedHarness = createHarness({
+        fetch: interactiveFetch,
+        env: { ROCKETFLAG_TOKEN: "rfu_user_tok" },
+        promptSelectProject: async () => "1",
+      });
+      expect(await runCli(["init"], numberedHarness.io)).toBe(EXIT_OK);
+      const numberedConfigRaw = JSON.parse(
+        await readFile(path.join(repoDir, ".rocketflag.json"), "utf8"),
+      ) as Record<string, unknown>;
+      expect(numberedConfigRaw).toEqual({
+        projectId: "Pj_1",
+      });
+
+      // 3. Auto-select when only 1 project exists
+      const singleProjFetch = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse({ projects: [projects[0]!] }));
+      const singleProjHarness = createHarness({
+        fetch: singleProjFetch,
+        env: { ROCKETFLAG_TOKEN: "rfu_user_tok" },
+      });
+      expect(await runCli(["init"], singleProjHarness.io)).toBe(EXIT_OK);
+      const singleRepoConfig = JSON.parse(
+        await readFile(path.join(repoDir, ".rocketflag.json"), "utf8"),
+      ) as Record<string, unknown>;
+      expect(singleRepoConfig).toEqual({
+        projectId: "Pj_1",
       });
     });
   });
@@ -446,6 +808,38 @@ describe("rocketflag CLI commands", () => {
       expect(String(fetchMock.mock.calls[1]![0])).toBe(
         "https://api.rocketflag.app/api/v1/flags/Fg1",
       );
+    });
+
+    it("requires a project for rfu_ user sessions and sends X-RocketFlag-Project when configured", async () => {
+      const noProjDir = path.join(tempRoot, "no-proj-repo");
+      await mkdir(noProjDir, { recursive: true });
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse({ flags: [sampleFlags[0]] }));
+
+      const missingProjHarness = createHarness({
+        cwd: noProjDir,
+        fetch: fetchMock,
+        env: { ROCKETFLAG_TOKEN: "rfu_user_tok" },
+      });
+      expect(await runCli(["flags", "list"], missingProjHarness.io)).toBe(EXIT_USAGE);
+      expect(missingProjHarness.getStderr()).toContain("No project selected");
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      const withProjHarness = createHarness({
+        cwd: noProjDir,
+        fetch: fetchMock,
+        env: { ROCKETFLAG_TOKEN: "rfu_user_tok" },
+      });
+      expect(
+        await runCli(
+          ["flags", "list", "--project", "Pj_Explicit", "--json"],
+          withProjHarness.io,
+        ),
+      ).toBe(EXIT_OK);
+      expect(
+        new Headers(fetchMock.mock.calls[0]![1]?.headers).get("X-RocketFlag-Project"),
+      ).toBe("Pj_Explicit");
     });
   });
 

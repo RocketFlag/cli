@@ -1,6 +1,6 @@
 {
   "name": "@rocketflag/management",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Zero-dependency TypeScript client for the RocketFlag Management and Evaluation APIs.",
   "license": "MIT",
   "type": "module",

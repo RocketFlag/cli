@@ -95,6 +95,7 @@ describe("End-to-end subprocess suite (compiled CLI binary)", () => {
   let nextFlagSeq: number;
 
   const validWriteToken = "rf_live_e2e_write_token";
+  const validUserToken = "rfu_live_e2e_user_session";
 
   function serializeFlag(flag: StoredFlag, env?: string) {
     if (env) {
@@ -174,7 +175,9 @@ describe("End-to-end subprocess suite (compiled CLI binary)", () => {
 
       // Management API requires Bearer token
       const authHeader = req.headers.authorization;
-      if (authHeader !== `Bearer ${validWriteToken}`) {
+      const isProjectToken = authHeader === `Bearer ${validWriteToken}`;
+      const isUserToken = authHeader === `Bearer ${validUserToken}`;
+      if (!isProjectToken && !isUserToken) {
         sendJson(res, 401, {
           error: "Unauthorized",
           detail: "Invalid or expired API token.",
@@ -183,6 +186,31 @@ describe("End-to-end subprocess suite (compiled CLI binary)", () => {
       }
 
       if (method === "GET" && urlObj.pathname === "/api/v1/token") {
+        if (isUserToken) {
+          const projectHeader = req.headers["x-rocketflag-project"];
+          sendJson(res, 200, {
+            kind: "user",
+            id: "Cs_e2e_1",
+            name: "E2E Workstation",
+            expiresAt: 1798675200000,
+            user: {
+              id: "Usr_e2e_1",
+              email: "jk@rocketflag.app",
+              name: "JK Gunnink",
+            },
+            ...(projectHeader === "Pj_e2e_1"
+              ? {
+                  project: {
+                    id: "Pj_e2e_1",
+                    name: "RocketFlag E2E Project",
+                    environments: ["staging", "production"],
+                  },
+                  permission: "write",
+                }
+              : {}),
+          });
+          return;
+        }
         sendJson(res, 200, {
           kind: "token",
           id: "Tk_e2e_1",
@@ -197,6 +225,36 @@ describe("End-to-end subprocess suite (compiled CLI binary)", () => {
           createdAt: 1700000000000,
           lastUsedAt: 1700000001000,
           expiresAt: null,
+        });
+        return;
+      }
+
+      if (method === "GET" && urlObj.pathname === "/api/v1/projects") {
+        sendJson(res, 200, {
+          projects: [
+            {
+              id: "Pj_e2e_1",
+              name: "RocketFlag E2E Project",
+              organisationId: "Org_e2e_1",
+              organisationName: "RocketFlag Org",
+              environments: ["staging", "production"],
+              permission: "write",
+            },
+          ],
+        });
+        return;
+      }
+
+      if (method === "POST" && urlObj.pathname === "/api/v1/session/revoke") {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      if (isUserToken && req.headers["x-rocketflag-project"] !== "Pj_e2e_1") {
+        sendJson(res, 400, {
+          error: "Invalid request",
+          detail: "X-RocketFlag-Project header is required for user sessions.",
         });
         return;
       }
@@ -465,7 +523,7 @@ describe("End-to-end subprocess suite (compiled CLI binary)", () => {
     );
     expect(evalReq).toBeDefined();
     expect(evalReq?.headers.authorization).toBeUndefined();
-    expect(evalReq?.headers["x-rocketflag-client"]).toBe("cli/1.1.0");
+    expect(evalReq?.headers["x-rocketflag-client"]).toBe("cli/1.2.0");
     expect(evalReq?.url).toContain("env=staging");
     expect(evalReq?.url).toContain("cohort=beta");
     expect(evalReq?.url).toContain("targetingKey=user_1");
@@ -483,5 +541,44 @@ describe("End-to-end subprocess suite (compiled CLI binary)", () => {
       { cwd: workspaceDir, env: baseEnv },
     );
     expect(authRes.code).toBe(3);
+
+    // 10. User session workflow: login --token rfu_... -> projects list -> whoami -> flags list -> logout
+    const userLoginRes = await runCliSubprocess(
+      ["login", "--token", validUserToken, "--api-url", apiUrl],
+      { cwd: workspaceDir, env: baseEnv },
+    );
+    expect(userLoginRes.code).toBe(0);
+    expect(userLoginRes.stdout).toContain("Authenticated as JK Gunnink (jk@rocketflag.app)");
+
+    const projectsRes = await runCliSubprocess(["projects", "list", "--json"], {
+      cwd: workspaceDir,
+      env: baseEnv,
+    });
+    expect(projectsRes.code).toBe(0);
+    expect(JSON.parse(projectsRes.stdout)).toEqual({
+      projects: [
+        {
+          id: "Pj_e2e_1",
+          name: "RocketFlag E2E Project",
+          organisationId: "Org_e2e_1",
+          organisationName: "RocketFlag Org",
+          environments: ["staging", "production"],
+          permission: "write",
+        },
+      ],
+    });
+
+    const userFlagsListRes = await runCliSubprocess(["flags", "list", "--json"], {
+      cwd: workspaceDir,
+      env: baseEnv,
+    });
+    expect(userFlagsListRes.code).toBe(0);
+
+    const logoutRes = await runCliSubprocess(["logout", "--json"], {
+      cwd: workspaceDir,
+      env: baseEnv,
+    });
+    expect(logoutRes.code).toBe(0);
+    expect(JSON.parse(logoutRes.stdout).loggedOut).toBe(true);
   });
 });

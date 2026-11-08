@@ -10,19 +10,28 @@ export { runInitCommand } from "./commands/init.js";
 export {
   CLI_CLIENT_NAME,
   CLI_CLIENT_VERSION,
+  defaultOpenBrowser,
+  defaultStartLoopbackAuth,
   runLoginCommand,
 } from "./commands/login.js";
+export { runLogoutCommand } from "./commands/logout.js";
+export { runProjectsCommand } from "./commands/projects.js";
 export { runWhoamiCommand } from "./commands/whoami.js";
 export {
   DEFAULT_API_URL,
+  DEFAULT_CONSOLE_URL,
+  deleteUserConfig,
   findRepoConfig,
   getUserConfigDir,
   getUserConfigPath,
+  isUserSessionToken,
   loadUserConfig,
   normalizeOptionalEnv,
   REPO_CONFIG_FILENAME,
   resolveApiUrl,
+  resolveConsoleUrl,
   resolveEnvironment,
+  resolveProjectId,
   resolveToken,
   saveRepoConfig,
   saveUserConfig,

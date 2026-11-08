@@ -5,7 +5,13 @@ import {
   getStaleTokenEnvironments,
   isMultiEnvironmentProject,
 } from "@rocketflag/management";
-import { loadUserConfig, resolveApiUrl, resolveToken } from "../config.js";
+import {
+  findRepoConfig,
+  loadUserConfig,
+  resolveApiUrl,
+  resolveProjectId,
+  resolveToken,
+} from "../config.js";
 import {
   EXIT_AUTH,
   EXIT_OK,
@@ -28,6 +34,7 @@ export async function runWhoamiCommand(
     parsed = parseArgs({
       args,
       options: {
+        project: { type: "string" },
         token: { type: "string" },
         "api-url": { type: "string" },
         json: { type: "boolean", default: false },
@@ -44,7 +51,7 @@ export async function runWhoamiCommand(
   if (parsed.values.help) {
     writeLine(
       io,
-      "Usage: rocketflag whoami [--token <rf_...>] [--api-url <url>] [--json]",
+      "Usage: rocketflag whoami [--project <id>] [--token <token>] [--api-url <url>] [--json]",
     );
     return EXIT_OK;
   }
@@ -59,7 +66,7 @@ export async function runWhoamiCommand(
   if (!token) {
     writeErrorLine(
       io,
-      "Not authenticated. Run 'rocketflag login', pass --token <rf_...>, or set ROCKETFLAG_TOKEN.",
+      "Not authenticated. Run 'rocketflag login', pass --token <token>, or set ROCKETFLAG_TOKEN.",
     );
     return EXIT_AUTH;
   }
@@ -70,9 +77,17 @@ export async function runWhoamiCommand(
     userConfig,
   });
 
+  const foundRepo = await findRepoConfig(io.cwd);
+  const projectId = resolveProjectId({
+    flagProject: parsed.values.project,
+    env: io.env,
+    repoConfig: foundRepo?.config,
+  });
+
   const client = createManagementClient({
     token,
     apiUrl,
+    projectId,
     clientName: CLI_CLIENT_NAME,
     clientVersion: CLI_CLIENT_VERSION,
     fetch: io.fetch,
@@ -102,26 +117,59 @@ export async function runWhoamiCommand(
       ? "multi-environment"
       : "single-environment";
     const projectEnvsLabel = multiEnvironment
-      ? tokenInfo.project.environments.join(", ")
+      ? (tokenInfo.project?.environments ?? []).join(", ")
       : "none (single-environment)";
-    const allowedEnvsLabel = !multiEnvironment
-      ? "n/a (single-environment)"
-      : tokenInfo.environments.length === 0
-        ? `all (${allowedEnvironments.join(", ")})`
-        : allowedEnvironments.length > 0
-          ? allowedEnvironments.join(", ")
-          : "none";
     const expiryLabel =
       tokenInfo.expiresAt === null || tokenInfo.expiresAt === 0
         ? "never"
         : new Date(tokenInfo.expiresAt).toISOString();
 
+    if (tokenInfo.kind === "user" || tokenInfo.user) {
+      const userName = tokenInfo.user?.name ?? "";
+      const userEmail = tokenInfo.user?.email ?? "";
+      writeLine(
+        io,
+        `Account: ${userName ? `${userName} (${userEmail})` : userEmail}`,
+      );
+      writeLine(io, `Session: ${tokenInfo.name} (${tokenInfo.id})`);
+      writeLine(io, `Expiry: ${expiryLabel}`);
+      if (tokenInfo.project) {
+        writeLine(
+          io,
+          `Project: ${tokenInfo.project.name} (${tokenInfo.project.id}) [${modeLabel}]`,
+        );
+        if (tokenInfo.permission) {
+          writeLine(io, `Permission: ${tokenInfo.permission}`);
+        }
+        writeLine(io, `Project environments: ${projectEnvsLabel}`);
+      } else {
+        writeLine(
+          io,
+          "Project: none selected (run 'rocketflag init' or pass --project <id>)",
+        );
+      }
+      return EXIT_OK;
+    }
+
+    const tokenEnvs = tokenInfo.environments ?? [];
+    const allowedEnvsLabel = !multiEnvironment
+      ? "n/a (single-environment)"
+      : tokenEnvs.length === 0
+        ? `all (${allowedEnvironments.join(", ")})`
+        : allowedEnvironments.length > 0
+          ? allowedEnvironments.join(", ")
+          : "none";
+
     writeLine(io, `Token: ${tokenInfo.name} (${tokenInfo.id})`);
-    writeLine(io, `Permission: ${tokenInfo.permission}`);
-    writeLine(
-      io,
-      `Project: ${tokenInfo.project.name} (${tokenInfo.project.id}) [${modeLabel}]`,
-    );
+    if (tokenInfo.permission) {
+      writeLine(io, `Permission: ${tokenInfo.permission}`);
+    }
+    if (tokenInfo.project) {
+      writeLine(
+        io,
+        `Project: ${tokenInfo.project.name} (${tokenInfo.project.id}) [${modeLabel}]`,
+      );
+    }
     writeLine(io, `Project environments: ${projectEnvsLabel}`);
     writeLine(io, `Token allowed environments: ${allowedEnvsLabel}`);
     writeLine(io, `Expiry: ${expiryLabel}`);
