@@ -796,6 +796,79 @@ describe("rocketflag CLI commands", () => {
     });
   });
 
+  describe("flags update", () => {
+    it("patches cohorts, percentage, audience, and enabled state on a flag", async () => {
+      const updatedFlag: PublicFlag = {
+        id: "Fg1",
+        name: "checkout-v2",
+        kind: "flag",
+        enabled: true,
+        trafficPercentage: 50,
+        cohorts: ["user@example.com"],
+        audienceId: null,
+        updatedAt: 1790730000000,
+      };
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse({ changed: true, flag: updatedFlag }));
+
+      const { io, getStdout } = createHarness({
+        fetch: fetchMock,
+        env: { ROCKETFLAG_TOKEN: "rf_write" },
+      });
+
+      const code = await runCli(
+        [
+          "flags",
+          "update",
+          "Fg1",
+          "--on",
+          "--percentage",
+          "50",
+          "--cohort",
+          "user@example.com",
+          "--clear-audience",
+          "--json",
+        ],
+        io,
+      );
+
+      expect(code).toBe(EXIT_OK);
+      const [url, init] = fetchMock.mock.calls[0]!;
+      expect(new URL(String(url)).pathname).toBe("/api/v1/flags/Fg1");
+      expect(init?.method).toBe("PATCH");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        enabled: true,
+        trafficPercentage: 50,
+        cohorts: ["user@example.com"],
+        audienceId: null,
+      });
+      expect(JSON.parse(getStdout())).toEqual({
+        changed: true,
+        flag: updatedFlag,
+      });
+    });
+
+    it("rejects conflicting flags or empty patch with EXIT_USAGE (2)", async () => {
+      const fetchMock = vi.fn<typeof globalThis.fetch>();
+
+      for (const badArgs of [
+        ["flags", "update", "Fg1"],
+        ["flags", "update", "Fg1", "--on", "--off"],
+        ["flags", "update", "Fg1", "--cohort", "a@b.com", "--clear-cohorts"],
+        ["flags", "update", "Fg1", "--audience", "aud_1", "--clear-audience"],
+        ["flags", "update", "Fg1", "--percentage", "150"],
+      ]) {
+        const { io } = createHarness({
+          fetch: fetchMock,
+          env: { ROCKETFLAG_TOKEN: "rf_write" },
+        });
+        expect(await runCli(badArgs, io)).toBe(EXIT_USAGE);
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe("flags eval", () => {
     it("evaluates a flag with --env, --cohort, --key, --attr, and --json even without a token", async () => {
       const evalPayload = { id: "Fg1", name: "checkout-v2", enabled: true };

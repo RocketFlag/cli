@@ -23,6 +23,7 @@ Commands:
   flags list [--name <exact>]   List feature flags in the project
   flags get <id> [--env <env>]  Fetch details for a feature flag
   flags create <name> [options] Create a new feature flag
+  flags update <id> [options]   Update a feature flag's state, percentage, cohorts, or audience
   flags toggle <id> [options]   Toggle a feature flag on or off
   flags eval <id> [options]     Evaluate a feature flag via the public Evaluation API
 

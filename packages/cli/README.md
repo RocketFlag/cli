@@ -83,6 +83,20 @@ rocketflag flags create <name> \
   [--json]
 ```
 
+### `rocketflag flags update <id>`
+
+Updates a flag's state (`enabled`, `trafficPercentage`, `cohorts`, or `audienceId`) via `PATCH /api/v1/flags/:id`. Requires a **Write** token. Only the fields you pass are updated; omitted fields stay unchanged.
+
+```bash
+rocketflag flags update <id> \
+  [--env <env>] \
+  [--on | --off] \
+  [--percentage <0-100>] \
+  [--cohort <cohort>... | --clear-cohorts] \
+  [--audience <audienceId> | --clear-audience] \
+  [--json]
+```
+
 ### `rocketflag flags toggle <id>`
 
 Flips a flag's `enabled` state (or sets it explicitly with `--on` or `--off`). Requires a **Write** token.
