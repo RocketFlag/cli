@@ -4,7 +4,11 @@ import path from "node:path";
 import type { PublicFlag, PublicProject, TokenInfo } from "@rocketflag/management";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runCli } from "../src/cli.js";
-import { defaultStartLoopbackAuth } from "../src/commands/login.js";
+import {
+  CLI_CLIENT_VERSION,
+  defaultStartLoopbackAuth,
+} from "../src/commands/login.js";
+import { isNewerVersion } from "../src/commands/update.js";
 import { saveRepoConfig, saveUserConfig } from "../src/config.js";
 import {
   EXIT_AUTH,
@@ -107,11 +111,13 @@ describe("rocketflag CLI commands", () => {
         ...overrides?.env,
       },
       cwd: overrides?.cwd ?? repoDir,
+      isTTY: overrides?.isTTY ?? false,
       promptToken: overrides?.promptToken,
       promptSelectEnv: overrides?.promptSelectEnv,
       promptSelectProject: overrides?.promptSelectProject,
       openBrowser: overrides?.openBrowser,
       startLoopbackAuth: overrides?.startLoopbackAuth,
+      installGlobalPackage: overrides?.installGlobalPackage,
       fetch: overrides?.fetch,
     };
     return {
@@ -1335,6 +1341,148 @@ describe("rocketflag CLI commands", () => {
 
       expect(code).toBe(EXIT_ERROR);
       expect(getStderr()).toContain("Flag not found");
+    });
+  });
+
+  describe("update command & 24h cached update notice", () => {
+    it("compares semver versions accurately via isNewerVersion", () => {
+      expect(isNewerVersion("1.2.0", "1.2.0")).toBe(false);
+      expect(isNewerVersion("1.2.0", "1.1.9")).toBe(false);
+      expect(isNewerVersion("1.2.0", "1.2.1")).toBe(true);
+      expect(isNewerVersion("1.2.0", "1.3.0")).toBe(true);
+      expect(isNewerVersion("1.2.0", "2.0.0")).toBe(true);
+      expect(isNewerVersion("v1.2.0", "v1.3.0")).toBe(true);
+      expect(isNewerVersion("1.2.0", "1.3.0-beta.1")).toBe(false);
+    });
+
+    it("reports up to date when registry version matches current version", async () => {
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse({ version: CLI_CLIENT_VERSION }))
+        .mockResolvedValueOnce(jsonResponse({ version: CLI_CLIENT_VERSION }));
+
+      const humanHarness = createHarness({ fetch: fetchMock });
+      expect(await runCli(["update"], humanHarness.io)).toBe(EXIT_OK);
+      expect(humanHarness.getStdout()).toContain(
+        `rocketflag is already up to date (v${CLI_CLIENT_VERSION}).`,
+      );
+
+      const jsonHarness = createHarness({ fetch: fetchMock });
+      expect(await runCli(["update", "--json"], jsonHarness.io)).toBe(EXIT_OK);
+      expect(JSON.parse(jsonHarness.getStdout())).toEqual({
+        currentVersion: CLI_CLIENT_VERSION,
+        latestVersion: CLI_CLIENT_VERSION,
+        updateAvailable: false,
+        updated: false,
+      });
+    });
+
+    it("checks and installs a newer version via rocketflag update (and upgrade alias)", async () => {
+      const installedVersions: string[] = [];
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse({ version: "9.9.9" }))
+        .mockResolvedValueOnce(jsonResponse({ version: "9.9.9" }))
+        .mockResolvedValueOnce(jsonResponse({ version: "9.9.9" }));
+
+      // 1. --check only checks without installing
+      const checkHarness = createHarness({
+        fetch: fetchMock,
+        installGlobalPackage: async (v) => {
+          installedVersions.push(v);
+        },
+      });
+      expect(await runCli(["update", "--check"], checkHarness.io)).toBe(EXIT_OK);
+      expect(checkHarness.getStdout()).toContain(
+        `Update available: v${CLI_CLIENT_VERSION} -> v9.9.9.`,
+      );
+      expect(installedVersions).toEqual([]);
+
+      // 2. Full update installs @rocketflag/cli@9.9.9
+      const updateHarness = createHarness({
+        fetch: fetchMock,
+        installGlobalPackage: async (v) => {
+          installedVersions.push(v);
+        },
+      });
+      expect(await runCli(["update"], updateHarness.io)).toBe(EXIT_OK);
+      expect(installedVersions).toEqual(["9.9.9"]);
+      expect(updateHarness.getStdout()).toContain(
+        `Updated @rocketflag/cli from v${CLI_CLIENT_VERSION} to v9.9.9.`,
+      );
+
+      // 3. upgrade alias with --json
+      const jsonHarness = createHarness({
+        fetch: fetchMock,
+        installGlobalPackage: async (v) => {
+          installedVersions.push(v);
+        },
+      });
+      expect(await runCli(["upgrade", "--json"], jsonHarness.io)).toBe(EXIT_OK);
+      expect(JSON.parse(jsonHarness.getStdout())).toEqual({
+        currentVersion: CLI_CLIENT_VERSION,
+        latestVersion: "9.9.9",
+        updateAvailable: true,
+        updated: true,
+      });
+    });
+
+    it("returns EXIT_ERROR with an actionable hint if global npm install fails", async () => {
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse({ version: "9.9.9" }));
+      const { io, getStderr } = createHarness({
+        fetch: fetchMock,
+        installGlobalPackage: async () => {
+          throw new Error("EACCES: permission denied");
+        },
+      });
+
+      expect(await runCli(["update"], io)).toBe(EXIT_ERROR);
+      expect(getStderr()).toContain("EACCES: permission denied");
+      expect(getStderr()).toContain("npm install -g @rocketflag/cli@latest");
+    });
+
+    it("prints a 24h cached update notice on TTY stderr and suppresses it for --json or CI", async () => {
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse(singleEnvWriteToken))
+        .mockResolvedValueOnce(jsonResponse({ version: "9.9.9" }))
+        .mockResolvedValueOnce(jsonResponse(singleEnvWriteToken))
+        .mockResolvedValueOnce(jsonResponse(singleEnvWriteToken));
+
+      // First interactive run: fetches token + npm registry and caches update-check.json
+      const ttyHarness1 = createHarness({
+        fetch: fetchMock,
+        isTTY: true,
+        env: { ROCKETFLAG_TOKEN: "rf_tok" },
+      });
+      expect(await runCli(["whoami"], ttyHarness1.io)).toBe(EXIT_OK);
+      expect(ttyHarness1.getStderr()).toContain(
+        `Update available: v${CLI_CLIENT_VERSION} -> v9.9.9. Run 'rocketflag update' to update.`,
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      // Second interactive run within 24h: uses cached update-check.json without hitting npm registry again
+      const ttyHarness2 = createHarness({
+        fetch: fetchMock,
+        isTTY: true,
+        env: { ROCKETFLAG_TOKEN: "rf_tok" },
+      });
+      expect(await runCli(["whoami"], ttyHarness2.io)).toBe(EXIT_OK);
+      expect(ttyHarness2.getStderr()).toContain(
+        `Update available: v${CLI_CLIENT_VERSION} -> v9.9.9. Run 'rocketflag update' to update.`,
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+
+      // --json run: never prints update notice
+      const jsonHarness = createHarness({
+        fetch: fetchMock,
+        isTTY: true,
+        env: { ROCKETFLAG_TOKEN: "rf_tok" },
+      });
+      expect(await runCli(["whoami", "--json"], jsonHarness.io)).toBe(EXIT_OK);
+      expect(jsonHarness.getStderr()).toBe("");
     });
   });
 });

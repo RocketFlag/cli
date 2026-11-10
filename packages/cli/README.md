@@ -118,6 +118,14 @@ rocketflag flags eval <id> \
   [--json]
 ```
 
+### `rocketflag update` (or `rocketflag upgrade`)
+
+Checks the npm registry for a newer version of `@rocketflag/cli` and runs `npm install -g @rocketflag/cli@<latest>` when an update is available. Pass `--check` to check without installing. In interactive terminals, the CLI also checks for updates at most once every 24 hours (cached in `~/.config/rocketflag/update-check.json`; set `ROCKETFLAG_NO_UPDATE_CHECK=1` to disable).
+
+```bash
+rocketflag update [--check] [--json]
+```
+
 ## Configuration & Precedence
 
 - **API Token:** `--token` > `ROCKETFLAG_TOKEN` > `~/.config/rocketflag/config.json` (`XDG_CONFIG_HOME` and `ROCKETFLAG_CONFIG_DIR` are respected).

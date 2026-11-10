@@ -3,6 +3,10 @@ import { runInitCommand } from "./commands/init.js";
 import { CLI_CLIENT_VERSION, runLoginCommand } from "./commands/login.js";
 import { runLogoutCommand } from "./commands/logout.js";
 import { runProjectsCommand } from "./commands/projects.js";
+import {
+  maybePrintUpdateNotice,
+  runUpdateCommand,
+} from "./commands/update.js";
 import { runWhoamiCommand } from "./commands/whoami.js";
 import {
   createDefaultIo,
@@ -30,6 +34,7 @@ Commands:
   flags update <id> [options]   Update a feature flag's state, percentage, cohorts, or audience
   flags toggle <id> [options]   Toggle a feature flag on or off
   flags eval <id> [options]     Evaluate a feature flag via the public Evaluation API
+  update [--check]              Check for a newer CLI version and update @rocketflag/cli
 
 Global options:
   --project <id>                Override target project ID (or set ROCKETFLAG_PROJECT)
@@ -58,19 +63,29 @@ export async function runCli(
     return EXIT_OK;
   }
 
+  let exitCode: number;
   switch (command) {
     case "login":
-      return runLoginCommand(rest, io);
+      exitCode = await runLoginCommand(rest, io);
+      break;
     case "logout":
-      return runLogoutCommand(rest, io);
+      exitCode = await runLogoutCommand(rest, io);
+      break;
     case "whoami":
-      return runWhoamiCommand(rest, io);
+      exitCode = await runWhoamiCommand(rest, io);
+      break;
     case "projects":
-      return runProjectsCommand(rest, io);
+      exitCode = await runProjectsCommand(rest, io);
+      break;
     case "init":
-      return runInitCommand(rest, io);
+      exitCode = await runInitCommand(rest, io);
+      break;
     case "flags":
-      return runFlagsCommand(rest, io);
+      exitCode = await runFlagsCommand(rest, io);
+      break;
+    case "update":
+    case "upgrade":
+      return runUpdateCommand(rest, io);
     default:
       writeErrorLine(
         io,
@@ -78,4 +93,7 @@ export async function runCli(
       );
       return EXIT_USAGE;
   }
+
+  await maybePrintUpdateNotice(argv, io);
+  return exitCode;
 }
