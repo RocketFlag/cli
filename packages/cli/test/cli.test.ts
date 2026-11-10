@@ -8,13 +8,17 @@ import {
   CLI_CLIENT_VERSION,
   defaultStartLoopbackAuth,
 } from "../src/commands/login.js";
-import { isNewerVersion } from "../src/commands/update.js";
+import {
+  defaultInstallGlobalPackage,
+  isNewerVersion,
+} from "../src/commands/update.js";
 import { saveRepoConfig, saveUserConfig } from "../src/config.js";
 import {
   EXIT_AUTH,
   EXIT_ERROR,
   EXIT_OK,
   EXIT_USAGE,
+  sanitizeTerminalText,
   type CliIo,
 } from "../src/output.js";
 
@@ -266,12 +270,19 @@ describe("rocketflag CLI commands", () => {
               expect(port).toBeTruthy();
               expect(state).toBeTruthy();
 
+              // Stray callback with wrong state does not abort the pending login session
+              const badStateRes = await globalThis.fetch(
+                `http://127.0.0.1:${port}/callback?token=rfu_wrong&state=wrong_state`,
+              );
+              expect(badStateRes.status).toBe(400);
+
               const callbackRes = await globalThis.fetch(
                 `http://127.0.0.1:${port}/callback?token=rfu_loopback_secret_999&state=${encodeURIComponent(state!)}`,
               );
               expect(callbackRes.status).toBe(200);
               const html = await callbackRes.text();
               expect(html).toContain("Authenticated with RocketFlag");
+              expect(html).toContain("history.replaceState");
               return true;
             },
           }),
@@ -1483,6 +1494,25 @@ describe("rocketflag CLI commands", () => {
       });
       expect(await runCli(["whoami", "--json"], jsonHarness.io)).toBe(EXIT_OK);
       expect(jsonHarness.getStderr()).toBe("");
+    });
+
+    it("rejects non-strict semver specifiers in update and strips ANSI escape sequences from terminal output", async () => {
+      await expect(
+        defaultInstallGlobalPackage("1.4.0 && touch /tmp/pwn"),
+      ).rejects.toThrow(/Refusing to install invalid version specifier/);
+
+      const maliciousRegistryFetch = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(
+          jsonResponse({ version: "1.4.0; calc.exe" }),
+        );
+      const badUpdateHarness = createHarness({ fetch: maliciousRegistryFetch });
+      expect(await runCli(["update"], badUpdateHarness.io)).toBe(EXIT_ERROR);
+      expect(badUpdateHarness.getStderr()).toContain("Invalid semver version");
+
+      expect(
+        sanitizeTerminalText("flag-\x1b[31mred\x1b[0m\x07name"),
+      ).toBe("flag-redname");
     });
   });
 });

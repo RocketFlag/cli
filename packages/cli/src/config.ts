@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -130,7 +130,14 @@ export async function findRepoConfig(
   startDir: string,
 ): Promise<FoundRepoConfig | null> {
   let current = path.resolve(startDir);
+  const homeBoundary = path.resolve(os.homedir());
+  const tmpBoundary = path.resolve(os.tmpdir());
+
   while (true) {
+    if (current === tmpBoundary || path.dirname(current) === current) {
+      return null;
+    }
+
     const candidate = path.join(current, REPO_CONFIG_FILENAME);
     try {
       const raw = await readFile(candidate, "utf8");
@@ -157,8 +164,18 @@ export async function findRepoConfig(
       }
     }
 
+    if (current === homeBoundary) {
+      return null;
+    }
+    try {
+      await stat(path.join(current, ".git"));
+      return null;
+    } catch {
+      // Not a git root; continue walking upward
+    }
+
     const parent = path.dirname(current);
-    if (parent === current) {
+    if (parent === current || parent === tmpBoundary) {
       return null;
     }
     current = parent;
@@ -195,6 +212,26 @@ export function resolveToken(options: {
   return normalizeOptionalEnv(options.userConfig?.token);
 }
 
+function validateServiceUrl(raw: string, label: string, stripTrailingSlash = false): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`Invalid ${label} '${raw}': must be a valid URL.`);
+  }
+  const isLoopback =
+    parsed.hostname === "127.0.0.1" ||
+    parsed.hostname === "localhost" ||
+    parsed.hostname === "[::1]" ||
+    parsed.hostname === "::1";
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLoopback)) {
+    throw new Error(
+      `Insecure ${label} '${raw}': must use https:// (http:// is only permitted for localhost).`,
+    );
+  }
+  return stripTrailingSlash ? raw.replace(/\/+$/, "") : raw;
+}
+
 export function resolveApiUrl(options: {
   flagApiUrl?: string;
   env?: NodeJS.ProcessEnv;
@@ -202,15 +239,15 @@ export function resolveApiUrl(options: {
 }): string {
   const fromFlag = normalizeOptionalEnv(options.flagApiUrl);
   if (fromFlag !== undefined) {
-    return fromFlag;
+    return validateServiceUrl(fromFlag, "API URL");
   }
   const fromEnv = normalizeOptionalEnv(options.env?.ROCKETFLAG_API_URL);
   if (fromEnv !== undefined) {
-    return fromEnv;
+    return validateServiceUrl(fromEnv, "API URL");
   }
   const fromConfig = normalizeOptionalEnv(options.userConfig?.apiUrl);
   if (fromConfig !== undefined) {
-    return fromConfig;
+    return validateServiceUrl(fromConfig, "API URL");
   }
   return DEFAULT_API_URL;
 }
@@ -238,11 +275,11 @@ export function resolveConsoleUrl(options: {
 }): string {
   const fromFlag = normalizeOptionalEnv(options.flagConsoleUrl);
   if (fromFlag !== undefined) {
-    return fromFlag.replace(/\/+$/, "");
+    return validateServiceUrl(fromFlag, "console URL", true);
   }
   const fromEnv = normalizeOptionalEnv(options.env?.ROCKETFLAG_CONSOLE_URL);
   if (fromEnv !== undefined) {
-    return fromEnv.replace(/\/+$/, "");
+    return validateServiceUrl(fromEnv, "console URL", true);
   }
   return DEFAULT_CONSOLE_URL.replace(/\/+$/, "");
 }

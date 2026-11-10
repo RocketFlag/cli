@@ -102,16 +102,26 @@ export function createDefaultIo(overrides?: Partial<CliIo>): CliIo {
   };
 }
 
+// eslint-disable-next-line no-control-regex
+const ANSI_AND_CONTROL_REGEX = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])|[\x00-\x08\x0B-\x1F\x7F-\x9F]/g;
+
+export function sanitizeTerminalText(text: string): string {
+  return text.replace(ANSI_AND_CONTROL_REGEX, "");
+}
+
 export function writeLine(io: CliIo, line = ""): void {
-  io.stdout(line.endsWith("\n") ? line : `${line}\n`);
+  const safe = sanitizeTerminalText(line);
+  io.stdout(safe.endsWith("\n") ? safe : `${safe}\n`);
 }
 
 export function writeErrorLine(io: CliIo, line: string): void {
-  io.stderr(line.endsWith("\n") ? line : `${line}\n`);
+  const safe = sanitizeTerminalText(line);
+  io.stderr(safe.endsWith("\n") ? safe : `${safe}\n`);
 }
 
 export function writeJson(io: CliIo, payload: unknown): void {
-  writeLine(io, JSON.stringify(payload, null, 2));
+  const json = JSON.stringify(payload, null, 2);
+  io.stdout(json.endsWith("\n") ? json : `${json}\n`);
 }
 
 export function formatStaleEnvWarning(staleEnvironments: string[]): string {
@@ -119,9 +129,10 @@ export function formatStaleEnvWarning(staleEnvironments: string[]): string {
 }
 
 export function formatTable(headers: string[], rows: string[][]): string {
+  const sanitizedRows = rows.map((row) => row.map((cell) => sanitizeTerminalText(cell)));
   const widths = headers.map((header, colIndex) => {
     let max = header.length;
-    for (const row of rows) {
+    for (const row of sanitizedRows) {
       const cell = row[colIndex] ?? "";
       if (cell.length > max) {
         max = cell.length;
@@ -137,7 +148,7 @@ export function formatTable(headers: string[], rows: string[][]): string {
       )
       .join("  ");
 
-  const lines = [formatRow(headers), ...rows.map(formatRow)];
+  const lines = [formatRow(headers), ...sanitizedRows.map(formatRow)];
   return lines.join("\n");
 }
 

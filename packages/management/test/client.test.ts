@@ -733,6 +733,34 @@ describe("@rocketflag/management", () => {
       );
       expect(fetchMock).not.toHaveBeenCalled();
     });
+
+    it("rejects relative path segments, invalid env names in getFlag/patchFlag, and insecure apiUrl", async () => {
+      const fetchMock = vi.fn<typeof globalThis.fetch>();
+      const client = createManagementClient({ token: "rf_tok", fetch: fetchMock });
+
+      for (const badId of ["", ".", ".."]) {
+        await expect(client.getFlag(badId)).rejects.toThrow(/Invalid flag id/);
+        await expect(client.patchFlag(badId, { enabled: true })).rejects.toThrow(/Invalid flag id/);
+        await expect(client.evaluateFlag(badId)).rejects.toThrow(/Invalid flag id/);
+      }
+      await expect(client.getFlag("Fg1", { env: "prod/../admin" })).rejects.toThrow(/env values/);
+      await expect(client.patchFlag("Fg1", { enabled: true }, { env: "prod/../admin" })).rejects.toThrow(/env values/);
+      expect(() =>
+        createManagementClient({
+          token: "rf_tok",
+          apiUrl: "http://api.evil.example",
+          fetch: fetchMock,
+        }),
+      ).toThrow(/Insecure apiUrl/);
+      expect(() =>
+        createManagementClient({
+          token: "rf_tok",
+          projectId: "bad/project",
+          fetch: fetchMock,
+        }),
+      ).toThrow(/Invalid projectId/);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   describe("error handling", () => {
