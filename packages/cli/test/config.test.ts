@@ -305,6 +305,52 @@ describe("CLI config and credential helpers", () => {
       ).toBe(DEFAULT_CONSOLE_URL);
     });
 
+    it("rejects insecure external http:// API and console URLs while allowing http://127.0.0.1 and http://localhost", () => {
+      expect(() =>
+        resolveApiUrl({
+          flagApiUrl: "http://api.evil.example",
+          env: {},
+          userConfig: null,
+        }),
+      ).toThrow(/Insecure API URL/);
+
+      expect(() =>
+        resolveConsoleUrl({
+          flagConsoleUrl: "http://console.evil.example",
+          env: {},
+        }),
+      ).toThrow(/Insecure console URL/);
+
+      expect(
+        resolveApiUrl({
+          flagApiUrl: "http://127.0.0.1:8080",
+          env: {},
+          userConfig: null,
+        }),
+      ).toBe("http://127.0.0.1:8080");
+
+      expect(
+        resolveConsoleUrl({
+          flagConsoleUrl: "http://localhost:5173/",
+          env: {},
+        }),
+      ).toBe("http://localhost:5173");
+    });
+
+    it("stops upward .rocketflag.json discovery at .git boundaries", async () => {
+      const parentAboveGit = path.join(tempRoot, "above-git");
+      const gitRepoRoot = path.join(parentAboveGit, "repo");
+      const nestedInsideRepo = path.join(gitRepoRoot, "packages", "app");
+      await mkdir(path.join(gitRepoRoot, ".git"), { recursive: true });
+      await mkdir(nestedInsideRepo, { recursive: true });
+
+      await saveRepoConfig(parentAboveGit, {
+        projectId: "Pj_Parent_Trap",
+      });
+
+      expect(await findRepoConfig(nestedInsideRepo)).toBeNull();
+    });
+
     it("resolves projectId in order: --project > ROCKETFLAG_PROJECT > .rocketflag.json projectId", () => {
       expect(
         resolveProjectId({

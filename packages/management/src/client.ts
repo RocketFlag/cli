@@ -19,6 +19,21 @@ const DEFAULT_API_URL = "https://api.rocketflag.app";
 const DEFAULT_CLIENT_NAME = "management";
 const DEFAULT_CLIENT_VERSION = "1.0.0";
 const ENV_REGEX = /^[A-Za-z0-9_-]+$/;
+const PROJECT_ID_REGEX = /^[A-Za-z0-9_-]+$/;
+
+function validateFlagId(id: string): void {
+  if (!id || id === "." || id === "..") {
+    throw new Error(`Invalid flag id: '${id}'`);
+  }
+}
+
+function validateEnvName(env?: string): void {
+  if (env !== undefined && env !== "" && !ENV_REGEX.test(env)) {
+    throw new Error(
+      `env values may only contain letters, numbers, hyphens and underscores. Invalid value for env: ${env}`,
+    );
+  }
+}
 
 export interface RocketFlagManagementClientOptions {
   token: string;
@@ -93,13 +108,35 @@ export class RocketFlagManagementClient {
 
   constructor(options: RocketFlagManagementClientOptions) {
     this.token = options.token;
-    const rawUrl = options.apiUrl ?? DEFAULT_API_URL;
-    this.apiUrl = rawUrl.replace(/\/+$/, "");
+    const rawUrl = (options.apiUrl ?? DEFAULT_API_URL).replace(/\/+$/, "");
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(rawUrl);
+    } catch {
+      throw new Error(`Invalid apiUrl: '${rawUrl}'`);
+    }
+    const isLoopback =
+      parsedUrl.hostname === "127.0.0.1" ||
+      parsedUrl.hostname === "localhost" ||
+      parsedUrl.hostname === "[::1]";
+    if (
+      parsedUrl.protocol !== "https:" &&
+      !(parsedUrl.protocol === "http:" && isLoopback)
+    ) {
+      throw new Error(
+        `Insecure apiUrl '${rawUrl}': must use https:// (http:// is only permitted for localhost).`,
+      );
+    }
+    this.apiUrl = rawUrl;
     const trimmedProjectId = options.projectId?.trim();
-    this.projectId =
-      trimmedProjectId && trimmedProjectId.length > 0
-        ? trimmedProjectId
-        : undefined;
+    if (trimmedProjectId && trimmedProjectId.length > 0) {
+      if (!PROJECT_ID_REGEX.test(trimmedProjectId)) {
+        throw new Error(`Invalid projectId: '${trimmedProjectId}'`);
+      }
+      this.projectId = trimmedProjectId;
+    } else {
+      this.projectId = undefined;
+    }
     this.clientName = options.clientName ?? DEFAULT_CLIENT_NAME;
     this.clientVersion = options.clientVersion ?? DEFAULT_CLIENT_VERSION;
     this.fetchImpl = options.fetch ?? globalThis.fetch;
@@ -147,6 +184,8 @@ export class RocketFlagManagementClient {
     id: string,
     options?: { env?: string },
   ): Promise<PublicFlag> {
+    validateFlagId(id);
+    validateEnvName(options?.env);
     const query = new URLSearchParams();
     if (options?.env !== undefined && options.env !== "") {
       query.set("env", options.env);
@@ -174,6 +213,8 @@ export class RocketFlagManagementClient {
     patch: FlagStatePatch,
     options?: { env?: string },
   ): Promise<PatchFlagResult> {
+    validateFlagId(id);
+    validateEnvName(options?.env);
     const query = new URLSearchParams();
     if (options?.env !== undefined && options.env !== "") {
       query.set("env", options.env);
@@ -193,6 +234,8 @@ export class RocketFlagManagementClient {
     id: string,
     options?: { env?: string; enabled?: boolean },
   ): Promise<ToggleFlagResult> {
+    validateFlagId(id);
+    validateEnvName(options?.env);
     const currentFlag = await this.getFlag(id, { env: options?.env });
     const previous = currentFlag.enabled;
     if (typeof previous !== "boolean") {
@@ -221,6 +264,7 @@ export class RocketFlagManagementClient {
     id: string,
     options?: EvaluateFlagOptions,
   ): Promise<EvaluateFlagResult> {
+    validateFlagId(id);
     if (options?.env !== undefined) {
       if (!ENV_REGEX.test(options.env)) {
         throw new Error(

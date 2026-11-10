@@ -36,6 +36,18 @@ const DEFAULT_LOOPBACK_TIMEOUT_MS = 5 * 60 * 1000;
 
 export function defaultOpenBrowser(url: string): Promise<boolean> {
   return new Promise((resolve) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      resolve(false);
+      return;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      resolve(false);
+      return;
+    }
+
     const platform = process.platform;
     let cmd: string;
     let args: string[];
@@ -44,8 +56,8 @@ export function defaultOpenBrowser(url: string): Promise<boolean> {
       cmd = "open";
       args = [url];
     } else if (platform === "win32") {
-      cmd = "cmd";
-      args = ["/c", "start", "", url];
+      cmd = "rundll32.exe";
+      args = ["url.dll,FileProtocolHandler", url];
     } else {
       cmd = "xdg-open";
       args = [url];
@@ -60,6 +72,15 @@ export function defaultOpenBrowser(url: string): Promise<boolean> {
       resolve(false);
     }
   });
+}
+
+function constantTimeEqualStrings(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "utf8");
+  const bufB = Buffer.from(b, "utf8");
+  if (bufA.length !== bufB.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
 }
 
 function renderHtmlPage(title: string, bodyText: string): string {
@@ -102,6 +123,7 @@ function renderHtmlPage(title: string, bodyText: string): string {
     <h1>${title}</h1>
     <p>${bodyText}</p>
   </div>
+  <script>try{if(window.history&&window.history.replaceState){window.history.replaceState(null,"","/done");}}catch(e){}</script>
 </body>
 </html>`;
 }
@@ -144,6 +166,21 @@ export async function defaultStartLoopbackAuth(options: {
 
     const server = http.createServer((req, res) => {
       const urlObj = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (req.method === "GET" && urlObj.pathname === "/done") {
+        res.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          Connection: "close",
+        });
+        res.end(
+          renderHtmlPage(
+            "Authenticated with RocketFlag",
+            "Authenticated with RocketFlag. You can close this tab and return to your terminal.",
+          ),
+        );
+        return;
+      }
+
       if (req.method !== "GET" || urlObj.pathname !== "/callback") {
         res.writeHead(404, {
           "Content-Type": "text/plain; charset=utf-8",
@@ -154,9 +191,10 @@ export async function defaultStartLoopbackAuth(options: {
       }
 
       const returnedState = urlObj.searchParams.get("state") ?? "";
-      if (returnedState !== state) {
+      if (!constantTimeEqualStrings(returnedState, state)) {
         res.writeHead(400, {
           "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
           Connection: "close",
         });
         res.end(
@@ -165,7 +203,6 @@ export async function defaultStartLoopbackAuth(options: {
             "The authentication state parameter did not match. Please return to your terminal and try again.",
           ),
         );
-        finishReject(new Error("Invalid state parameter in browser callback."));
         return;
       }
 
@@ -173,6 +210,7 @@ export async function defaultStartLoopbackAuth(options: {
       if (errorParam) {
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
           Connection: "close",
         });
         res.end(
@@ -189,6 +227,7 @@ export async function defaultStartLoopbackAuth(options: {
       if (!isUserSessionToken(token)) {
         res.writeHead(400, {
           "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
           Connection: "close",
         });
         res.end(
@@ -197,14 +236,12 @@ export async function defaultStartLoopbackAuth(options: {
             "The callback did not include a valid RocketFlag CLI session token.",
           ),
         );
-        finishReject(
-          new Error("Browser callback did not provide a valid rfu_ token."),
-        );
         return;
       }
 
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
         Connection: "close",
       });
       res.end(
@@ -279,18 +316,25 @@ export async function runLoginCommand(
   const existingConfig = await loadUserConfig({ env: io.env });
   const apiUrlOverride =
     normalizeOptionalEnv(parsed.values["api-url"]) ??
-    normalizeOptionalEnv(io.env.ROCKETFLAG_API_URL) ??
     normalizeOptionalEnv(existingConfig?.apiUrl);
-  const apiUrl = resolveApiUrl({
-    flagApiUrl: parsed.values["api-url"],
-    env: io.env,
-    userConfig: existingConfig,
-  });
-  const consoleUrl = resolveConsoleUrl({
-    flagConsoleUrl: parsed.values["console-url"],
-    env: io.env,
-    apiUrl,
-  });
+  let apiUrl: string;
+  let consoleUrl: string;
+  try {
+    apiUrl = resolveApiUrl({
+      flagApiUrl: parsed.values["api-url"],
+      env: io.env,
+      userConfig: existingConfig,
+    });
+    consoleUrl = resolveConsoleUrl({
+      flagConsoleUrl: parsed.values["console-url"],
+      env: io.env,
+      apiUrl,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    writeErrorLine(io, message);
+    return EXIT_USAGE;
+  }
   const deviceName =
     normalizeOptionalEnv(parsed.values["device-name"]) ??
     normalizeOptionalEnv(os.hostname()) ??

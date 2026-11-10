@@ -79,8 +79,12 @@ export async function loadUpdateCheckCache(
     ) {
       return null;
     }
+    const latestVersion = record.latestVersion.trim();
+    if (!parseSemver(latestVersion)) {
+      return null;
+    }
     return {
-      latestVersion: record.latestVersion.trim(),
+      latestVersion,
       checkedAt: record.checkedAt,
     };
   } catch {
@@ -116,6 +120,17 @@ export async function fetchLatestCliVersion(options: {
   const registryUrl =
     normalizeOptionalEnv(options.env?.ROCKETFLAG_NPM_LATEST_URL) ??
     DEFAULT_NPM_LATEST_URL;
+  const parsedRegistryUrl = new URL(registryUrl);
+  const isLoopback =
+    parsedRegistryUrl.hostname === "127.0.0.1" ||
+    parsedRegistryUrl.hostname === "localhost" ||
+    parsedRegistryUrl.hostname === "[::1]";
+  if (
+    parsedRegistryUrl.protocol !== "https:" &&
+    !(parsedRegistryUrl.protocol === "http:" && isLoopback)
+  ) {
+    throw new Error("Registry URL must use https://");
+  }
   const timeoutMs = options.timeoutMs ?? UPDATE_CHECK_TIMEOUT_MS;
 
   const response = await fetchFn(registryUrl, {
@@ -137,15 +152,24 @@ export async function fetchLatestCliVersion(options: {
     throw new Error("Invalid version payload from npm registry");
   }
 
-  return ((data as Record<string, unknown>).version as string).trim();
+  const version = ((data as Record<string, unknown>).version as string).trim();
+  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error(`Invalid semver version from npm registry: '${version}'`);
+  }
+  return version;
 }
 
 export function defaultInstallGlobalPackage(version: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    const cleaned = version.trim();
+    if (!/^\d+\.\d+\.\d+$/.test(cleaned)) {
+      reject(new Error(`Refusing to install invalid version specifier: '${version}'`));
+      return;
+    }
     const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
     execFile(
       npmCmd,
-      ["install", "-g", `@rocketflag/cli@${version}`],
+      ["install", "-g", `@rocketflag/cli@${cleaned}`],
       (err, _stdout, stderr) => {
         if (err) {
           const detail = stderr?.trim() || err.message;
