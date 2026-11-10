@@ -16,6 +16,20 @@ export {
 } from "./commands/login.js";
 export { runLogoutCommand } from "./commands/logout.js";
 export { runProjectsCommand } from "./commands/projects.js";
+export {
+  DEFAULT_NPM_LATEST_URL,
+  defaultInstallGlobalPackage,
+  fetchLatestCliVersion,
+  getUpdateCheckCachePath,
+  isNewerVersion,
+  loadUpdateCheckCache,
+  maybePrintUpdateNotice,
+  runUpdateCommand,
+  saveUpdateCheckCache,
+  UPDATE_CHECK_FILENAME,
+  UPDATE_CHECK_TTL_MS,
+  type UpdateCheckCache,
+} from "./commands/update.js";
 export { runWhoamiCommand } from "./commands/whoami.js";
 export {
   DEFAULT_API_URL,

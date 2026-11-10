@@ -11,6 +11,7 @@ export interface CliIo {
   stderr: (text: string) => void;
   env: NodeJS.ProcessEnv;
   cwd: string;
+  isTTY?: boolean;
   promptToken?: () => Promise<string>;
   promptSelectEnv?: (envs: string[]) => Promise<string>;
   promptSelectProject?: (projects: PublicProject[]) => Promise<string>;
@@ -21,6 +22,7 @@ export interface CliIo {
     openBrowser: (url: string) => Promise<boolean>;
     onAuthUrl?: (url: string) => void;
   }) => Promise<string>;
+  installGlobalPackage?: (version: string) => Promise<void>;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -88,12 +90,14 @@ export function createDefaultIo(overrides?: Partial<CliIo>): CliIo {
     stderr: overrides?.stderr ?? ((text: string) => process.stderr.write(text)),
     env: overrides?.env ?? process.env,
     cwd: overrides?.cwd ?? process.cwd(),
+    isTTY: overrides?.isTTY ?? Boolean(process.stderr.isTTY),
     promptToken: overrides?.promptToken ?? defaultPromptToken,
     promptSelectEnv: overrides?.promptSelectEnv ?? defaultPromptSelectEnv,
     promptSelectProject:
       overrides?.promptSelectProject ?? defaultPromptSelectProject,
     openBrowser: overrides?.openBrowser,
     startLoopbackAuth: overrides?.startLoopbackAuth,
+    installGlobalPackage: overrides?.installGlobalPackage,
     fetch: overrides?.fetch,
   };
 }
