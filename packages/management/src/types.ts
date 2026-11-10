@@ -7,15 +7,33 @@ export interface TokenProject {
   environments: string[];
 }
 
-export interface TokenInfo {
+export interface CliSessionUser {
+  id: string;
+  email: string;
+  name: string;
+}
+
+export interface PublicProject {
   id: string;
   name: string;
-  project: TokenProject;
-  permission: TokenPermission;
-  /** Empty array `[]` means unrestricted (all project environments). */
+  organisationId: string;
+  organisationName: string;
   environments: string[];
+  permission: TokenPermission;
+}
+
+export interface TokenInfo {
+  kind?: "token" | "user";
+  id: string;
+  name: string;
+  project?: TokenProject;
+  permission?: TokenPermission;
+  /** Empty array `[]` means unrestricted (all project environments). Present on project tokens. */
+  environments?: string[];
   /** Unix milliseconds, or `null` / `0` when the token does not expire. */
   expiresAt: number | null;
+  /** Present when `kind === "user"` (`rfu_...` CLI session). */
+  user?: CliSessionUser;
 }
 
 export interface EnvironmentState {
@@ -94,29 +112,26 @@ export interface EvaluateFlagResult {
 }
 
 export function isMultiEnvironmentProject(tokenInfo: TokenInfo): boolean {
-  return tokenInfo.project.environments.length > 0;
+  return (tokenInfo.project?.environments.length ?? 0) > 0;
 }
 
 export function getAllowedEnvironments(tokenInfo: TokenInfo): string[] {
-  if (tokenInfo.project.environments.length === 0) {
+  const projectEnvs = tokenInfo.project?.environments ?? [];
+  if (projectEnvs.length === 0) {
     return [];
   }
-  if (tokenInfo.environments.length === 0) {
-    return [...tokenInfo.project.environments];
+  const tokenEnvs = tokenInfo.environments ?? [];
+  if (tokenEnvs.length === 0) {
+    return [...projectEnvs];
   }
-  return tokenInfo.environments.filter((env) =>
-    tokenInfo.project.environments.includes(env),
-  );
+  return tokenEnvs.filter((env) => projectEnvs.includes(env));
 }
 
 export function getStaleTokenEnvironments(tokenInfo: TokenInfo): string[] {
-  if (
-    tokenInfo.project.environments.length === 0 ||
-    tokenInfo.environments.length === 0
-  ) {
+  const projectEnvs = tokenInfo.project?.environments ?? [];
+  const tokenEnvs = tokenInfo.environments ?? [];
+  if (projectEnvs.length === 0 || tokenEnvs.length === 0) {
     return [];
   }
-  return tokenInfo.environments.filter(
-    (env) => !tokenInfo.project.environments.includes(env),
-  );
+  return tokenEnvs.filter((env) => !projectEnvs.includes(env));
 }

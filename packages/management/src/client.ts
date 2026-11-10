@@ -10,6 +10,7 @@ import type {
   FlagStatePatch,
   PatchFlagResult,
   PublicFlag,
+  PublicProject,
   ToggleFlagResult,
   TokenInfo,
 } from "./types.js";
@@ -22,6 +23,7 @@ const ENV_REGEX = /^[A-Za-z0-9_-]+$/;
 export interface RocketFlagManagementClientOptions {
   token: string;
   apiUrl?: string;
+  projectId?: string;
   clientName?: string;
   clientVersion?: string;
   fetch?: typeof globalThis.fetch;
@@ -84,6 +86,7 @@ function isErrorEnvelope(value: unknown): value is RocketFlagErrorEnvelope {
 export class RocketFlagManagementClient {
   private readonly token: string;
   private readonly apiUrl: string;
+  private readonly projectId?: string;
   private readonly clientName: string;
   private readonly clientVersion: string;
   private readonly fetchImpl: typeof globalThis.fetch;
@@ -92,6 +95,11 @@ export class RocketFlagManagementClient {
     this.token = options.token;
     const rawUrl = options.apiUrl ?? DEFAULT_API_URL;
     this.apiUrl = rawUrl.replace(/\/+$/, "");
+    const trimmedProjectId = options.projectId?.trim();
+    this.projectId =
+      trimmedProjectId && trimmedProjectId.length > 0
+        ? trimmedProjectId
+        : undefined;
     this.clientName = options.clientName ?? DEFAULT_CLIENT_NAME;
     this.clientVersion = options.clientVersion ?? DEFAULT_CLIENT_VERSION;
     this.fetchImpl = options.fetch ?? globalThis.fetch;
@@ -100,6 +108,24 @@ export class RocketFlagManagementClient {
   public async getToken(): Promise<TokenInfo> {
     return this.request<TokenInfo>("/api/v1/token", {
       method: "GET",
+      authenticated: true,
+    });
+  }
+
+  public async listProjects(): Promise<PublicProject[]> {
+    const response = await this.request<{ projects: PublicProject[] }>(
+      "/api/v1/projects",
+      {
+        method: "GET",
+        authenticated: true,
+      },
+    );
+    return response.projects;
+  }
+
+  public async revokeSession(): Promise<void> {
+    await this.request<void>("/api/v1/session/revoke", {
+      method: "POST",
       authenticated: true,
     });
   }
@@ -238,6 +264,9 @@ export class RocketFlagManagementClient {
 
     if (authenticated) {
       headers.Authorization = `Bearer ${this.token}`;
+      if (this.projectId) {
+        headers["X-RocketFlag-Project"] = this.projectId;
+      }
     }
 
     if (hasBody) {
@@ -303,6 +332,10 @@ export class RocketFlagManagementClient {
         error: `HTTP ${response.status}`,
         detail: fallbackDetail,
       });
+    }
+
+    if (response.status === 204) {
+      return undefined as T;
     }
 
     return (await response.json()) as T;

@@ -1,5 +1,5 @@
 import readline from "node:readline/promises";
-import { RocketFlagApiError } from "@rocketflag/management";
+import { RocketFlagApiError, type PublicProject } from "@rocketflag/management";
 
 export const EXIT_OK = 0;
 export const EXIT_ERROR = 1;
@@ -13,6 +13,14 @@ export interface CliIo {
   cwd: string;
   promptToken?: () => Promise<string>;
   promptSelectEnv?: (envs: string[]) => Promise<string>;
+  promptSelectProject?: (projects: PublicProject[]) => Promise<string>;
+  openBrowser?: (url: string) => Promise<boolean>;
+  startLoopbackAuth?: (options: {
+    consoleUrl: string;
+    deviceName: string;
+    openBrowser: (url: string) => Promise<boolean>;
+    onAuthUrl?: (url: string) => void;
+  }) => Promise<string>;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -26,7 +34,7 @@ export function createDefaultIo(overrides?: Partial<CliIo>): CliIo {
           output: process.stderr,
         });
         try {
-          const answer = await rl.question("Enter RocketFlag API token (rf_...): ");
+          const answer = await rl.question("Enter RocketFlag token (rfu_... or rf_...): ");
           return answer.trim();
         } finally {
           rl.close();
@@ -51,6 +59,30 @@ export function createDefaultIo(overrides?: Partial<CliIo>): CliIo {
       }
     : undefined;
 
+  const defaultPromptSelectProject = isInteractive
+    ? async (projects: PublicProject[]): Promise<string> => {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stderr,
+        });
+        try {
+          process.stderr.write("Available projects:\n");
+          for (const [idx, project] of projects.entries()) {
+            const orgLabel = project.organisationName || "Personal";
+            process.stderr.write(
+              `  ${idx + 1}. ${project.id}  ${project.name} (${orgLabel})\n`,
+            );
+          }
+          const answer = await rl.question(
+            `Select project (1-${projects.length} or project ID): `,
+          );
+          return answer.trim();
+        } finally {
+          rl.close();
+        }
+      }
+    : undefined;
+
   return {
     stdout: overrides?.stdout ?? ((text: string) => process.stdout.write(text)),
     stderr: overrides?.stderr ?? ((text: string) => process.stderr.write(text)),
@@ -58,6 +90,10 @@ export function createDefaultIo(overrides?: Partial<CliIo>): CliIo {
     cwd: overrides?.cwd ?? process.cwd(),
     promptToken: overrides?.promptToken ?? defaultPromptToken,
     promptSelectEnv: overrides?.promptSelectEnv ?? defaultPromptSelectEnv,
+    promptSelectProject:
+      overrides?.promptSelectProject ?? defaultPromptSelectProject,
+    openBrowser: overrides?.openBrowser,
+    startLoopbackAuth: overrides?.startLoopbackAuth,
     fetch: overrides?.fetch,
   };
 }

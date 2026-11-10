@@ -1,8 +1,9 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 export const DEFAULT_API_URL = "https://api.rocketflag.app";
+export const DEFAULT_CONSOLE_URL = "https://console.rocketflag.app";
 export const REPO_CONFIG_FILENAME = ".rocketflag.json";
 
 export interface UserConfig {
@@ -110,6 +111,21 @@ export async function loadUserConfig(
   };
 }
 
+export async function deleteUserConfig(
+  options?: UserConfigOptions,
+): Promise<boolean> {
+  const filePath = getUserConfigPath(options);
+  try {
+    await unlink(filePath);
+    return true;
+  } catch (err) {
+    if (isErrnoException(err) && err.code === "ENOENT") {
+      return false;
+    }
+    throw err;
+  }
+}
+
 export async function findRepoConfig(
   startDir: string,
 ): Promise<FoundRepoConfig | null> {
@@ -213,4 +229,40 @@ export function resolveEnvironment(options: {
     return fromEnv;
   }
   return normalizeOptionalEnv(options.repoConfig?.defaultEnv);
+}
+
+export function resolveConsoleUrl(options: {
+  flagConsoleUrl?: string;
+  env?: NodeJS.ProcessEnv;
+  apiUrl?: string;
+}): string {
+  const fromFlag = normalizeOptionalEnv(options.flagConsoleUrl);
+  if (fromFlag !== undefined) {
+    return fromFlag.replace(/\/+$/, "");
+  }
+  const fromEnv = normalizeOptionalEnv(options.env?.ROCKETFLAG_CONSOLE_URL);
+  if (fromEnv !== undefined) {
+    return fromEnv.replace(/\/+$/, "");
+  }
+  return DEFAULT_CONSOLE_URL.replace(/\/+$/, "");
+}
+
+export function resolveProjectId(options: {
+  flagProject?: string;
+  env?: NodeJS.ProcessEnv;
+  repoConfig?: RepoConfig | null;
+}): string | undefined {
+  const fromFlag = normalizeOptionalEnv(options.flagProject);
+  if (fromFlag !== undefined) {
+    return fromFlag;
+  }
+  const fromEnv = normalizeOptionalEnv(options.env?.ROCKETFLAG_PROJECT);
+  if (fromEnv !== undefined) {
+    return fromEnv;
+  }
+  return normalizeOptionalEnv(options.repoConfig?.projectId);
+}
+
+export function isUserSessionToken(token: string): boolean {
+  return token.trim().startsWith("rfu_");
 }

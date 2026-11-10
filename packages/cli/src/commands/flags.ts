@@ -11,10 +11,12 @@ import {
 } from "@rocketflag/management";
 import {
   findRepoConfig,
+  isUserSessionToken,
   loadUserConfig,
   normalizeOptionalEnv,
   resolveApiUrl,
   resolveEnvironment,
+  resolveProjectId,
   resolveToken,
 } from "../config.js";
 import {
@@ -86,10 +88,23 @@ function printHumanFlagDetail(io: CliIo, flag: PublicFlag): void {
   }
 }
 
+type AuthClientResolution =
+  | {
+      ok: true;
+      client: ReturnType<typeof createManagementClient>;
+      token: string;
+      projectId?: string;
+      foundRepo: Awaited<ReturnType<typeof findRepoConfig>>;
+    }
+  | {
+      ok: false;
+      code: number;
+    };
+
 async function createAuthenticatedClient(
   io: CliIo,
-  options: { flagToken?: string; flagApiUrl?: string },
-) {
+  options: { flagToken?: string; flagApiUrl?: string; flagProject?: string },
+): Promise<AuthClientResolution> {
   const userConfig = await loadUserConfig({ env: io.env });
   const token = resolveToken({
     flagToken: options.flagToken,
@@ -97,20 +112,41 @@ async function createAuthenticatedClient(
     userConfig,
   });
   if (!token) {
-    return null;
+    writeErrorLine(
+      io,
+      "Not authenticated. Run 'rocketflag login', pass --token <token>, or set ROCKETFLAG_TOKEN.",
+    );
+    return { ok: false, code: EXIT_AUTH };
   }
+  const foundRepo = await findRepoConfig(io.cwd);
+  const projectId = resolveProjectId({
+    flagProject: options.flagProject,
+    env: io.env,
+    repoConfig: foundRepo?.config,
+  });
+
+  if (isUserSessionToken(token) && !projectId) {
+    writeErrorLine(
+      io,
+      "No project selected. Run 'rocketflag init' in this repository, pass --project <id>, or set ROCKETFLAG_PROJECT.",
+    );
+    return { ok: false, code: EXIT_USAGE };
+  }
+
   const apiUrl = resolveApiUrl({
     flagApiUrl: options.flagApiUrl,
     env: io.env,
     userConfig,
   });
-  return createManagementClient({
+  const client = createManagementClient({
     token,
     apiUrl,
+    ...(isUserSessionToken(token) && projectId ? { projectId } : {}),
     clientName: CLI_CLIENT_NAME,
     clientVersion: CLI_CLIENT_VERSION,
     fetch: io.fetch,
   });
+  return { ok: true, client, token, projectId, foundRepo };
 }
 
 async function runFlagsList(args: string[], io: CliIo): Promise<number> {
@@ -120,6 +156,7 @@ async function runFlagsList(args: string[], io: CliIo): Promise<number> {
       args,
       options: {
         name: { type: "string" },
+        project: { type: "string" },
         token: { type: "string" },
         "api-url": { type: "string" },
         json: { type: "boolean", default: false },
@@ -136,22 +173,20 @@ async function runFlagsList(args: string[], io: CliIo): Promise<number> {
   if (parsed.values.help) {
     writeLine(
       io,
-      "Usage: rocketflag flags list [--name <exact>] [--token <rf_...>] [--api-url <url>] [--json]",
+      "Usage: rocketflag flags list [--name <exact>] [--project <id>] [--token <token>] [--api-url <url>] [--json]",
     );
     return EXIT_OK;
   }
 
-  const client = await createAuthenticatedClient(io, {
+  const resolved = await createAuthenticatedClient(io, {
     flagToken: parsed.values.token,
     flagApiUrl: parsed.values["api-url"],
+    flagProject: parsed.values.project,
   });
-  if (!client) {
-    writeErrorLine(
-      io,
-      "Not authenticated. Run 'rocketflag login', pass --token <rf_...>, or set ROCKETFLAG_TOKEN.",
-    );
-    return EXIT_AUTH;
+  if (!resolved.ok) {
+    return resolved.code;
   }
+  const { client } = resolved;
 
   try {
     const nameFilter = normalizeOptionalEnv(parsed.values.name);
@@ -190,6 +225,7 @@ async function runFlagsGet(args: string[], io: CliIo): Promise<number> {
       args,
       options: {
         env: { type: "string" },
+        project: { type: "string" },
         token: { type: "string" },
         "api-url": { type: "string" },
         json: { type: "boolean", default: false },
@@ -206,7 +242,7 @@ async function runFlagsGet(args: string[], io: CliIo): Promise<number> {
   if (parsed.values.help) {
     writeLine(
       io,
-      "Usage: rocketflag flags get <id> [--env <env>] [--token <rf_...>] [--api-url <url>] [--json]",
+      "Usage: rocketflag flags get <id> [--env <env>] [--project <id>] [--token <token>] [--api-url <url>] [--json]",
     );
     return EXIT_OK;
   }
@@ -217,19 +253,16 @@ async function runFlagsGet(args: string[], io: CliIo): Promise<number> {
     return EXIT_USAGE;
   }
 
-  const client = await createAuthenticatedClient(io, {
+  const resolved = await createAuthenticatedClient(io, {
     flagToken: parsed.values.token,
     flagApiUrl: parsed.values["api-url"],
+    flagProject: parsed.values.project,
   });
-  if (!client) {
-    writeErrorLine(
-      io,
-      "Not authenticated. Run 'rocketflag login', pass --token <rf_...>, or set ROCKETFLAG_TOKEN.",
-    );
-    return EXIT_AUTH;
+  if (!resolved.ok) {
+    return resolved.code;
   }
+  const { client, foundRepo } = resolved;
 
-  const foundRepo = await findRepoConfig(io.cwd);
   const env = normalizeOptionalEnv(
     resolveEnvironment({
       flagEnv: parsed.values.env,
@@ -282,6 +315,7 @@ async function runFlagsCreate(args: string[], io: CliIo): Promise<number> {
         cohort: { type: "string", multiple: true },
         audience: { type: "string" },
         env: { type: "string" },
+        project: { type: "string" },
         token: { type: "string" },
         "api-url": { type: "string" },
         json: { type: "boolean", default: false },
@@ -298,7 +332,7 @@ async function runFlagsCreate(args: string[], io: CliIo): Promise<number> {
   if (parsed.values.help) {
     writeLine(
       io,
-      "Usage: rocketflag flags create <name> [--description <text>] [--tag <tag>...] [--enabled] [--percentage <0-100>] [--cohort <c>...] [--audience <id>] [--env <env>] [--json]",
+      "Usage: rocketflag flags create <name> [--description <text>] [--tag <tag>...] [--enabled] [--percentage <0-100>] [--cohort <c>...] [--audience <id>] [--env <env>] [--project <id>] [--json]",
     );
     return EXIT_OK;
   }
@@ -307,7 +341,7 @@ async function runFlagsCreate(args: string[], io: CliIo): Promise<number> {
   if (!name || parsed.positionals.length > 1) {
     writeErrorLine(
       io,
-      "Usage: rocketflag flags create <name> [--description <text>] [--tag <tag>...] [--enabled] [--percentage <0-100>] [--cohort <c>...] [--audience <id>] [--env <env>] [--json]",
+      "Usage: rocketflag flags create <name> [--description <text>] [--tag <tag>...] [--enabled] [--percentage <0-100>] [--cohort <c>...] [--audience <id>] [--env <env>] [--project <id>] [--json]",
     );
     return EXIT_USAGE;
   }
@@ -333,20 +367,26 @@ async function runFlagsCreate(args: string[], io: CliIo): Promise<number> {
     trafficPercentage = num;
   }
 
-  const client = await createAuthenticatedClient(io, {
+  const resolved = await createAuthenticatedClient(io, {
     flagToken: parsed.values.token,
     flagApiUrl: parsed.values["api-url"],
+    flagProject: parsed.values.project,
   });
-  if (!client) {
-    writeErrorLine(
-      io,
-      "Not authenticated. Run 'rocketflag login', pass --token <rf_...>, or set ROCKETFLAG_TOKEN.",
-    );
-    return EXIT_AUTH;
+  if (!resolved.ok) {
+    return resolved.code;
   }
+  const { client, foundRepo } = resolved;
 
   try {
     const tokenInfo = await client.getToken();
+    const project = tokenInfo.project;
+    if (!project) {
+      writeErrorLine(
+        io,
+        "Project was not found or you do not have access to it.",
+      );
+      return EXIT_AUTH;
+    }
     if (tokenInfo.permission === "read") {
       writeErrorLine(
         io,
@@ -371,7 +411,7 @@ async function runFlagsCreate(args: string[], io: CliIo): Promise<number> {
       if (parsed.values.env !== undefined) {
         writeErrorLine(
           io,
-          `Project '${tokenInfo.project.name}' is a single-environment project and does not use --env.`,
+          `Project '${project.name}' is a single-environment project and does not use --env.`,
         );
         return EXIT_USAGE;
       }
@@ -418,7 +458,6 @@ async function runFlagsCreate(args: string[], io: CliIo): Promise<number> {
     };
 
     if (hasInitialState || explicitEnv !== undefined) {
-      const foundRepo = await findRepoConfig(io.cwd);
       const targetEnv = normalizeOptionalEnv(
         resolveEnvironment({
           flagEnv: parsed.values.env,
@@ -430,15 +469,15 @@ async function runFlagsCreate(args: string[], io: CliIo): Promise<number> {
       if (!targetEnv) {
         writeErrorLine(
           io,
-          `Project '${tokenInfo.project.name}' is a multi-environment project. Pass --env <env> or run 'rocketflag init' before setting initial flag state.`,
+          `Project '${project.name}' is a multi-environment project. Pass --env <env> or run 'rocketflag init' before setting initial flag state.`,
         );
         return EXIT_USAGE;
       }
 
-      if (!tokenInfo.project.environments.includes(targetEnv)) {
+      if (!project.environments.includes(targetEnv)) {
         writeErrorLine(
           io,
-          `Unknown environment '${targetEnv}' for project '${tokenInfo.project.name}'. Valid project environments: ${tokenInfo.project.environments.join(", ")}.`,
+          `Unknown environment '${targetEnv}' for project '${project.name}'. Valid project environments: ${project.environments.join(", ")}.`,
         );
         return EXIT_USAGE;
       }
@@ -489,6 +528,7 @@ async function runFlagsUpdate(args: string[], io: CliIo): Promise<number> {
         "clear-cohorts": { type: "boolean", default: false },
         audience: { type: "string" },
         "clear-audience": { type: "boolean", default: false },
+        project: { type: "string" },
         token: { type: "string" },
         "api-url": { type: "string" },
         json: { type: "boolean", default: false },
@@ -505,7 +545,7 @@ async function runFlagsUpdate(args: string[], io: CliIo): Promise<number> {
   if (parsed.values.help) {
     writeLine(
       io,
-      "Usage: rocketflag flags update <id> [--env <env>] [--on | --off] [--percentage <0-100>] [--cohort <c>... | --clear-cohorts] [--audience <id> | --clear-audience] [--token <rf_...>] [--api-url <url>] [--json]",
+      "Usage: rocketflag flags update <id> [--env <env>] [--on | --off] [--percentage <0-100>] [--cohort <c>... | --clear-cohorts] [--audience <id> | --clear-audience] [--project <id>] [--token <token>] [--api-url <url>] [--json]",
     );
     return EXIT_OK;
   }
@@ -604,19 +644,16 @@ async function runFlagsUpdate(args: string[], io: CliIo): Promise<number> {
     return EXIT_USAGE;
   }
 
-  const client = await createAuthenticatedClient(io, {
+  const resolved = await createAuthenticatedClient(io, {
     flagToken: parsed.values.token,
     flagApiUrl: parsed.values["api-url"],
+    flagProject: parsed.values.project,
   });
-  if (!client) {
-    writeErrorLine(
-      io,
-      "Not authenticated. Run 'rocketflag login', pass --token <rf_...>, or set ROCKETFLAG_TOKEN.",
-    );
-    return EXIT_AUTH;
+  if (!resolved.ok) {
+    return resolved.code;
   }
+  const { client, foundRepo } = resolved;
 
-  const foundRepo = await findRepoConfig(io.cwd);
   const env = normalizeOptionalEnv(
     resolveEnvironment({
       flagEnv: parsed.values.env,
@@ -654,6 +691,7 @@ async function runFlagsToggle(args: string[], io: CliIo): Promise<number> {
         env: { type: "string" },
         on: { type: "boolean", default: false },
         off: { type: "boolean", default: false },
+        project: { type: "string" },
         token: { type: "string" },
         "api-url": { type: "string" },
         json: { type: "boolean", default: false },
@@ -670,7 +708,7 @@ async function runFlagsToggle(args: string[], io: CliIo): Promise<number> {
   if (parsed.values.help) {
     writeLine(
       io,
-      "Usage: rocketflag flags toggle <id> [--env <env>] [--on | --off] [--token <rf_...>] [--api-url <url>] [--json]",
+      "Usage: rocketflag flags toggle <id> [--env <env>] [--on | --off] [--project <id>] [--token <token>] [--api-url <url>] [--json]",
     );
     return EXIT_OK;
   }
@@ -689,19 +727,16 @@ async function runFlagsToggle(args: string[], io: CliIo): Promise<number> {
     return EXIT_USAGE;
   }
 
-  const client = await createAuthenticatedClient(io, {
+  const resolved = await createAuthenticatedClient(io, {
     flagToken: parsed.values.token,
     flagApiUrl: parsed.values["api-url"],
+    flagProject: parsed.values.project,
   });
-  if (!client) {
-    writeErrorLine(
-      io,
-      "Not authenticated. Run 'rocketflag login', pass --token <rf_...>, or set ROCKETFLAG_TOKEN.",
-    );
-    return EXIT_AUTH;
+  if (!resolved.ok) {
+    return resolved.code;
   }
+  const { client, foundRepo } = resolved;
 
-  const foundRepo = await findRepoConfig(io.cwd);
   const env = normalizeOptionalEnv(
     resolveEnvironment({
       flagEnv: parsed.values.env,
@@ -807,6 +842,7 @@ async function runFlagsEval(args: string[], io: CliIo): Promise<number> {
         cohort: { type: "string" },
         key: { type: "string" },
         attr: { type: "string", multiple: true },
+        project: { type: "string" },
         token: { type: "string" },
         "api-url": { type: "string" },
         json: { type: "boolean", default: false },

@@ -4,13 +4,18 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_API_URL,
+  DEFAULT_CONSOLE_URL,
+  deleteUserConfig,
   findRepoConfig,
   getUserConfigDir,
   getUserConfigPath,
+  isUserSessionToken,
   loadUserConfig,
   normalizeOptionalEnv,
   resolveApiUrl,
+  resolveConsoleUrl,
   resolveEnvironment,
+  resolveProjectId,
   resolveToken,
   saveRepoConfig,
   saveUserConfig,
@@ -103,6 +108,20 @@ describe("CLI config and credential helpers", () => {
         env: { ROCKETFLAG_CONFIG_DIR: configDir },
       });
       expect(loaded).toEqual({ token: "rf_new" });
+    });
+
+    it("deletes user config file and returns true when present or false when missing", async () => {
+      const configDir = path.join(tempRoot, "delete-config");
+      const env = { ROCKETFLAG_CONFIG_DIR: configDir };
+
+      expect(await deleteUserConfig({ env })).toBe(false);
+
+      await saveUserConfig({ token: "rfu_session_123" }, { env });
+      expect(await loadUserConfig({ env })).toEqual({ token: "rfu_session_123" });
+
+      expect(await deleteUserConfig({ env })).toBe(true);
+      expect(await loadUserConfig({ env })).toBeNull();
+      expect(await deleteUserConfig({ env })).toBe(false);
     });
   });
 
@@ -261,6 +280,70 @@ describe("CLI config and credential helpers", () => {
       expect(normalizeOptionalEnv("")).toBeUndefined();
       expect(normalizeOptionalEnv("   ")).toBeUndefined();
       expect(normalizeOptionalEnv(" prod ")).toBe("prod");
+    });
+
+    it("resolves console URL in order: --console-url > ROCKETFLAG_CONSOLE_URL > default and strips trailing slashes", () => {
+      expect(
+        resolveConsoleUrl({
+          flagConsoleUrl: "https://console.custom.test///",
+          env: { ROCKETFLAG_CONSOLE_URL: "https://console.env.test" },
+        }),
+      ).toBe("https://console.custom.test");
+
+      expect(
+        resolveConsoleUrl({
+          flagConsoleUrl: "  ",
+          env: { ROCKETFLAG_CONSOLE_URL: "https://console.env.test/" },
+        }),
+      ).toBe("https://console.env.test");
+
+      expect(
+        resolveConsoleUrl({
+          env: {},
+          apiUrl: "http://127.0.0.1:8080",
+        }),
+      ).toBe(DEFAULT_CONSOLE_URL);
+    });
+
+    it("resolves projectId in order: --project > ROCKETFLAG_PROJECT > .rocketflag.json projectId", () => {
+      expect(
+        resolveProjectId({
+          flagProject: "Pj_Flag",
+          env: { ROCKETFLAG_PROJECT: "Pj_Env" },
+          repoConfig: { projectId: "Pj_Repo" },
+        }),
+      ).toBe("Pj_Flag");
+
+      expect(
+        resolveProjectId({
+          flagProject: "  ",
+          env: { ROCKETFLAG_PROJECT: "Pj_Env" },
+          repoConfig: { projectId: "Pj_Repo" },
+        }),
+      ).toBe("Pj_Env");
+
+      expect(
+        resolveProjectId({
+          flagProject: undefined,
+          env: { ROCKETFLAG_PROJECT: "" },
+          repoConfig: { projectId: "Pj_Repo" },
+        }),
+      ).toBe("Pj_Repo");
+
+      expect(
+        resolveProjectId({
+          flagProject: undefined,
+          env: {},
+          repoConfig: null,
+        }),
+      ).toBeUndefined();
+    });
+
+    it("detects rfu_ user session tokens vs rf_ project tokens", () => {
+      expect(isUserSessionToken("rfu_abc123")).toBe(true);
+      expect(isUserSessionToken("  rfu_abc123  ")).toBe(true);
+      expect(isUserSessionToken("rf_abc123")).toBe(false);
+      expect(isUserSessionToken("")).toBe(false);
     });
   });
 });

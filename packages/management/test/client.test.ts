@@ -7,7 +7,9 @@ import {
   RocketFlagApiError,
   RocketFlagManagementClient,
   RocketFlagNetworkError,
+  type CliSessionUser,
   type PublicFlag,
+  type PublicProject,
   type TokenInfo,
 } from "../src/index.js";
 
@@ -79,6 +81,36 @@ describe("@rocketflag/management", () => {
       expect(getStaleTokenEnvironments(unrestrictedMultiEnvToken)).toEqual([]);
       expect(getStaleTokenEnvironments(restrictedMultiEnvToken)).toEqual(["old-qa"]);
     });
+
+    it("handles user session TokenInfo without project or environments", () => {
+      const userSessionWithoutProject: TokenInfo = {
+        kind: "user",
+        id: "Cs1",
+        name: "MacBook Pro",
+        expiresAt: 1798675200000,
+        user: {
+          id: "U1",
+          email: "jk@example.com",
+          name: "JK",
+        },
+      };
+      expect(isMultiEnvironmentProject(userSessionWithoutProject)).toBe(false);
+      expect(getAllowedEnvironments(userSessionWithoutProject)).toEqual([]);
+      expect(getStaleTokenEnvironments(userSessionWithoutProject)).toEqual([]);
+
+      const userSessionWithProject: TokenInfo = {
+        ...userSessionWithoutProject,
+        project: {
+          id: "Pj2",
+          name: "Multi Project",
+          environments: ["dev", "prod"],
+        },
+        permission: "write",
+      };
+      expect(isMultiEnvironmentProject(userSessionWithProject)).toBe(true);
+      expect(getAllowedEnvironments(userSessionWithProject)).toEqual(["dev", "prod"]);
+      expect(getStaleTokenEnvironments(userSessionWithProject)).toEqual([]);
+    });
   });
 
   describe("getToken()", () => {
@@ -141,9 +173,124 @@ describe("@rocketflag/management", () => {
       const [url] = fetchMock.mock.calls[0]!;
       expect(String(url)).toBe("https://custom.rocketflag.test/api/v1/token");
     });
+
+    it("fetches user session metadata from GET /api/v1/token", async () => {
+      const userInfo: CliSessionUser = {
+        id: "Usr_123",
+        email: "jk@rocketflag.app",
+        name: "JK Gunnink",
+      };
+      const userPayload: TokenInfo = {
+        kind: "user",
+        id: "Cs_123",
+        name: "jk-laptop",
+        expiresAt: 1798675200000,
+        user: userInfo,
+      };
+      const fetchMock = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(jsonResponse(userPayload));
+
+      const client = createManagementClient({
+        token: "rfu_secret_123",
+        fetch: fetchMock,
+      });
+
+      const result = await client.getToken();
+      expect(result).toEqual(userPayload);
+      expect(result.kind).toBe("user");
+      expect(result.user).toEqual(userInfo);
+    });
+  });
+
+  describe("listProjects() and revokeSession()", () => {
+    it("fetches accessible projects from GET /api/v1/projects", async () => {
+      const projects: PublicProject[] = [
+        {
+          id: "Pj_1",
+          name: "Personal App",
+          organisationId: "",
+          organisationName: "",
+          environments: [],
+          permission: "write",
+        },
+        {
+          id: "Pj_2",
+          name: "Platform",
+          organisationId: "Org_1",
+          organisationName: "Acme Corp",
+          environments: ["dev", "prod"],
+          permission: "read",
+        },
+      ];
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse({ projects }));
+
+      const client = createManagementClient({
+        token: "rfu_user_token",
+        fetch: fetchMock,
+      });
+
+      const result = await client.listProjects();
+      expect(result).toEqual(projects);
+
+      const [url, init] = fetchMock.mock.calls[0]!;
+      expect(String(url)).toBe("https://api.rocketflag.app/api/v1/projects");
+      expect(init?.method).toBe("GET");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("Authorization")).toBe("Bearer rfu_user_token");
+    });
+
+    it("revokes session via POST /api/v1/session/revoke and handles 204 No Content", async () => {
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+      const client = createManagementClient({
+        token: "rfu_user_token",
+        fetch: fetchMock,
+      });
+
+      await expect(client.revokeSession()).resolves.toBeUndefined();
+
+      const [url, init] = fetchMock.mock.calls[0]!;
+      expect(String(url)).toBe("https://api.rocketflag.app/api/v1/session/revoke");
+      expect(init?.method).toBe("POST");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("Authorization")).toBe("Bearer rfu_user_token");
+    });
   });
 
   describe("headers and authentication", () => {
+    it("sends X-RocketFlag-Project on authenticated requests when projectId is set, and omits it when empty or unauthenticated", async () => {
+      const fetchMock = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(jsonResponse({ flags: [] }))
+        .mockResolvedValueOnce(jsonResponse({ id: "Fg1", name: "flag-1", enabled: true }))
+        .mockResolvedValueOnce(jsonResponse({ flags: [] }));
+
+      const clientWithProject = createManagementClient({
+        token: "rfu_user_token",
+        projectId: "  Pj_Selected_1  ",
+        fetch: fetchMock,
+      });
+
+      await clientWithProject.listFlags();
+      const [, authInit] = fetchMock.mock.calls[0]!;
+      expect(new Headers(authInit?.headers).get("X-RocketFlag-Project")).toBe("Pj_Selected_1");
+
+      await clientWithProject.evaluateFlag("Fg1");
+      const [, evalInit] = fetchMock.mock.calls[1]!;
+      expect(new Headers(evalInit?.headers).get("X-RocketFlag-Project")).toBeNull();
+
+      const clientEmptyProject = createManagementClient({
+        token: "rfu_user_token",
+        projectId: "   ",
+        fetch: fetchMock,
+      });
+      await clientEmptyProject.listFlags();
+      const [, emptyInit] = fetchMock.mock.calls[2]!;
+      expect(new Headers(emptyInit?.headers).get("X-RocketFlag-Project")).toBeNull();
+    });
     it("sends Authorization, User-Agent, and X-RocketFlag-Client on /api/v1/* requests", async () => {
       const fetchMock = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(jsonResponse({ flags: [] }));
 
