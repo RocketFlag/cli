@@ -30,7 +30,7 @@ import {
 } from "../output.js";
 
 export const CLI_CLIENT_NAME = "cli";
-export const CLI_CLIENT_VERSION = "1.3.0";
+export const CLI_CLIENT_VERSION = "1.3.1";
 
 const DEFAULT_LOOPBACK_TIMEOUT_MS = 5 * 60 * 1000;
 
